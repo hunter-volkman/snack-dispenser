@@ -32,9 +32,6 @@ def test_camera(device_id=0, num_frames=100):
 
     # Save the last frame after the test
     if last_frame is not None:
-        cv2.imshow("Last Frame", last_frame)
-        # Wait for a key press to close the window
-        cv2.waitKey(0)
         # Print debug info before saving
         print(f"Attempting to save the last frame to: {os.path.abspath('test_frame.jpg')}")
         success = cv2.imwrite("test_frame.jpg", last_frame)  # Save frame to a file
