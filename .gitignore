@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# AWS
+.aws/
+aws-credentials.json
+greengrass-config.yaml
+*.pem
+*.key
+*.crt
+device_credentials/
+
+# Logs and databases
+*.log
+*.sqlite
+*.db
+
+# Training data and models
+/training_data/
+/models/
+*.tflite
+*.h5
+*.weights
+
+# Image files (if not needed in version control)
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+
+# System
+.DS_Store
+Thumbs.db
+
+# Project-specific
+/greengrass/
+/storage/
+config/local-config.yaml
+deployment/local/
+*.backup
+
+# Raspberry Pi specific
+*.img
+*.zip
+
+# Runtime files
+*.pid
+*.sock
