@@ -43,7 +43,8 @@ class NEMA17Controller:
     
     def cleanup(self):
         """Cleanup GPIO resources."""
-        self.enable_motor(False)  # Disable motor
+        # Disable motor
+        self.enable_motor(False)  
         GPIO.cleanup()
 
 def main():
