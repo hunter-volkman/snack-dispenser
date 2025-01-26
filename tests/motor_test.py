@@ -24,7 +24,8 @@ class NEMA17Controller:
        GPIO.output(self.DIR_PIN, clockwise)
        print(f"Direction set to {'clockwise' if clockwise else 'counterclockwise'}")
    
-   def step(self, steps, delay=0.005):  # Increased default delay
+   # Increased default delay
+   def step(self, steps, delay=0.005):
        print(f"Starting {steps} steps...")
        for i in range(steps):
            GPIO.output(self.STEP_PIN, GPIO.HIGH)
@@ -35,12 +36,16 @@ class NEMA17Controller:
                print(f"Step {i}/{steps}")
    
    def rotate_degrees(self, degrees, clockwise=True, delay=0.005):
+       # Enable only before moving
+       self.enable_motor(True)  
        steps = int((abs(degrees) / 360) * 200)
        print(f"Rotating {degrees}° ({steps} steps)")
        self.set_direction(clockwise)
-       time.sleep(0.5)  # Wait for direction change
+       # Wait for direction change
+       time.sleep(0.5)
        self.step(steps, delay)
-   
+       # Disable after movement
+
    def cleanup(self):
        self.enable_motor(False)
        GPIO.cleanup()
