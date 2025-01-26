@@ -4,27 +4,31 @@ import argparse
 
 class NEMA17Controller:
     def __init__(self):
-        self.STEP_PIN = 16
         self.DIR_PIN = 15
+        self.STEP_PIN = 16
         self.ENABLE_PIN = 18
         
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup([self.STEP_PIN, self.DIR_PIN, self.ENABLE_PIN], GPIO.OUT)
         
         # Start with motor disabled
-        GPIO.output(self.ENABLE_PIN, GPIO.HIGH)  # HIGH = motor disabled
+        # HIGH = motor disabled
+        GPIO.output(self.ENABLE_PIN, GPIO.HIGH)
         print("Motor controller initialized (motor disabled)")
     
     def rotate_degrees(self, degrees, clockwise=True, delay=0.005):
-        steps = int((abs(degrees) / 360) * 200)  # Calculate steps for given degrees
+        # Calculate steps for given degrees
+        steps = int((abs(degrees) / 360) * 200)
         print(f"Rotating {degrees}° ({steps} steps)")
         
         # Enable motor only before moving
         self.enable_motor(True)
-        time.sleep(0.1)  # Brief pause to stabilize motor
+        # Brief pause to stabilize motor
+        time.sleep(0.1)
         
         self.set_direction(clockwise)
-        time.sleep(0.1)  # Brief pause after changing direction
+        # Brief pause after changing direction
+        time.sleep(0.1)  
         
         self.step(steps, delay)
         
@@ -46,11 +50,13 @@ class NEMA17Controller:
             time.sleep(delay)
             GPIO.output(self.STEP_PIN, GPIO.LOW)
             time.sleep(delay)
-            if i % 50 == 0:  # Log progress every 50 steps
+            if i % 50 == 0:
+                # Log progress every 50 steps
                 print(f"Step {i}/{steps}")
     
     def cleanup(self):
-        self.enable_motor(False)  # Ensure motor is disabled on cleanup
+        # Ensure motor is disabled on cleanup
+        self.enable_motor(False)  
         GPIO.cleanup()
         print("GPIO cleanup complete")
 
@@ -66,7 +72,8 @@ def main():
     
     try:
         print("Starting motor test...")
-        time.sleep(1)  # Wait before starting
+        # Wait before starting
+        time.sleep(1)
         motor.rotate_degrees(args.degrees, args.clockwise, args.speed)
         print("Test complete")
     except KeyboardInterrupt:
