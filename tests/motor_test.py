@@ -4,11 +4,12 @@ import argparse
 
 class NEMA17Controller:
    def __init__(self):
-       self.STEP_PIN = 18
-       self.DIR_PIN = 23 
-       self.ENABLE_PIN = 24
+       self.STEP_PIN = 16
+       self.DIR_PIN = 15
+       self.ENABLE_PIN = 18
        
-       GPIO.setmode(GPIO.BCM)
+       GPIO.setmode(GPIO.BOARD)
+       # GPIO.setmode(GPIO.BCM)
        GPIO.setup([self.STEP_PIN, self.DIR_PIN, self.ENABLE_PIN], GPIO.OUT)
        
        # Enable motor initially for testing
