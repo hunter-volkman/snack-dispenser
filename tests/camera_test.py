@@ -33,7 +33,7 @@ def test_camera(device_id=0, num_frames=100):
         
         # Save test image
         if last_frame is not None:
-            cv2.imwrite('camera_test.jpg', last_frame)
+            cv2.imwrite('test_frame.jpg', last_frame)
             
         return True, {
             "resolution": f"{width}x{height}",
