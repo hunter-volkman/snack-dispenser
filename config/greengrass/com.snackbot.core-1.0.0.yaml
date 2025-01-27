@@ -1,0 +1,32 @@
+---
+RecipeFormatVersion: 2020-01-25
+ComponentName: com.snackbot.core
+ComponentVersion: 1.0.0
+ComponentDescription: Snack Bot core component for bowl monitoring and dispensing
+ComponentPublisher: hunter.volkman
+ComponentConfiguration:
+  DefaultConfiguration:
+    checkInterval: 5
+    confidenceThreshold: 0.8
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        com.snackbot.core:mqttproxy:1:
+          policyDescription: "Allows access to mqtt topics"
+          operations:
+            - "aws.greengrass#PublishToIoTCore"
+          resources:
+            - "snackbot/bowlstate"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: s3://snack-bot-data/components/com.snackbot.core/1.0.0/snackbot.zip
+        Unarchive: ZIP
+    Lifecycle:
+      Install:
+        Script: |
+          python3 -m pip install --user -r {artifacts:decompressedPath}/snackbot/requirements.txt
+      Run:
+        Script: |
+          cd {artifacts:decompressedPath}/snackbot
+          python3 -m app.main

@@ -1,0 +1,22 @@
+# Hardware Configuration
+hardware:
+  camera:
+    device_id: 0
+    resolution:
+      width: 1280
+      height: 720
+  motor:
+    dir_pin: 15   # GPIO22
+    step_pin: 16  # GPIO23
+    en_pin: 18    # GPIO24
+
+# Vision Configuration
+vision:
+  image_size: [224, 224]
+  confidence_threshold: 0.8
+
+# AWS Configuration
+aws:
+  region: us-east-1
+  thing_name: SnackBotCore
+  thing_group: SnackBotGroup
