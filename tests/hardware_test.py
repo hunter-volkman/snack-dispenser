@@ -14,9 +14,9 @@ def test_camera():
 def test_motor():
     """Test motor movement"""
     # Pin definitions
-    STEP_PIN = 12  # GPIO18
-    DIR_PIN = 16   # GPIO23
-    EN_PIN = 18    # GPIO24
+    DIR_PIN = 15
+    STEP_PIN = 16 
+    EN_PIN = 18 
     
     try:
         GPIO.setmode(GPIO.BOARD)
