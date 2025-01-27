@@ -14,7 +14,7 @@ sudo -E java -Droot="/greengrass/v2" \
   -Dlog.store=FILE \
   -jar ./GreengrassInstaller/lib/Greengrass.jar \
   --aws-region "$AWS_REGION" \
-  --thing-name "PeanutBotCore" \
-  --thing-group-name "PeanutBotGroup" \
+  --thing-name "SnackBotCore" \
+  --thing-group-name "SnackBotGroup" \
   --component-default-user "pi:pi" \
   --setup-system-service true
