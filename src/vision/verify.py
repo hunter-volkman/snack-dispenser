@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""
+Verify trained model for Snack Bot vision system.
+Tests both sample images and live camera feed.
+"""
+import cv2
+import numpy as np
+import joblib
+import time
+import logging
+import argparse
+import os
+from pathlib import Path
+from tabulate import tabulate
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class ModelVerifier:
+    def __init__(self):
+        """Initialize verifier with project configuration."""
+        # Get project root directory (2 levels up from this script)
+        self.project_root = Path(__file__).parent.parent.parent
+        
+        # Set paths relative to project root
+        self.model_path = self.project_root / 'data/model/bowl_state_model.joblib'
+        self.data_path = self.project_root / 'data/training'
+        self.image_size = (224, 224)
+        
+        logger.info(f"Project root: {self.project_root}")
+        logger.info(f"Looking for model at: {self.model_path}")
+        
+        self.load_model()
+    
+    def load_model(self):
+        """Load the trained model."""
+        if not self.model_path.exists():
+            raise FileNotFoundError(
+                f"Model not found at {self.model_path}\n"
+                f"Current directory: {os.getcwd()}"
+            )
+        self.model = joblib.load(self.model_path)
+        logger.info("Model loaded successfully")
+    
+    def preprocess_image(self, image):
+        """Preprocess image for inference."""
+        resized = cv2.resize(image, self.image_size)
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        return rgb.reshape(1, -1)
+    
+    def predict(self, image):
+        """Run prediction with timing."""
+        start_time = time.time()
+        processed = self.preprocess_image(image)
+        prediction = self.model.predict_proba(processed)[0]
+        inference_time = time.time() - start_time
+        
+        is_empty = prediction[0] > 0.5
+        confidence = prediction[0] if is_empty else 1 - prediction[0]
+        
+        return is_empty, confidence, inference_time
+    
+    def test_sample_images(self):
+        """Test model with saved training images."""
+        results = []
+        
+        # Test both empty and full images
+        for state in ['empty', 'full']:
+            image_dir = self.data_path / state
+            if not image_dir.exists():
+                logger.warning(f"No {state} images found in {image_dir}")
+                continue
+            
+            # Test first 5 images of each class
+            for img_path in list(image_dir.glob('*.jpg'))[:5]:
+                image = cv2.imread(str(img_path))
+                if image is None:
+                    continue
+                
+                is_empty, confidence, inference_time = self.predict(image)
+                results.append({
+                    'image': img_path.name,
+                    'expected': state == 'empty',
+                    'predicted': is_empty,
+                    'confidence': confidence,
+                    'time_ms': inference_time * 1000
+                })
+        
+        return results
+    
+    def test_live(self, num_tests=5):
+        """Test model with live camera feed."""
+        results = []
+        cap = cv2.VideoCapture(0)
+        
+        if not cap.isOpened():
+            raise RuntimeError("Failed to open camera")
+        
+        logger.info("\nLive Testing")
+        logger.info("Press SPACE to capture test image")
+        logger.info("Press 'e' to mark as empty, 'f' to mark as full")
+        logger.info("Press 'q' to quit\n")
+        
+        try:
+            while len(results) < num_tests:
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+                
+                # Show live preview
+                cv2.imshow('Preview', frame)
+                key = cv2.waitKey(1) & 0xFF
+                
+                if key == ord('q'):
+                    break
+                elif key == ord(' '):
+                    # Run prediction
+                    is_empty, confidence, inference_time = self.predict(frame)
+                    
+                    # Show result and wait for label
+                    logger.info(f"\nPredicted: {'empty' if is_empty else 'full'} "
+                              f"(confidence: {confidence:.2f})")
+                    logger.info("Press 'e' for empty, 'f' for full")
+                    
+                    while True:
+                        label_key = cv2.waitKey(0) & 0xFF
+                        if label_key in [ord('e'), ord('f')]:
+                            actual_empty = label_key == ord('e')
+                            results.append({
+                                'image': f'live_{len(results)}',
+                                'expected': actual_empty,
+                                'predicted': is_empty,
+                                'confidence': confidence,
+                                'time_ms': inference_time * 1000
+                            })
+                            break
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+        
+        return results
+    
+    def print_results(self, results):
+        """Print verification results in a formatted table."""
+        if not results:
+            logger.error("No results to display")
+            return
+        
+        # Calculate statistics
+        correct = sum(1 for r in results if r['expected'] == r['predicted'])
+        accuracy = correct / len(results) * 100
+        avg_time = sum(r['time_ms'] for r in results) / len(results)
+        avg_conf = sum(r['confidence'] for r in results) / len(results)
+        
+        # Print summary
+        logger.info("\nTest Results:")
+        logger.info(f"Accuracy: {accuracy:.1f}%")
+        logger.info(f"Average inference time: {avg_time:.1f}ms")
+        logger.info(f"Average confidence: {avg_conf:.2f}")
+        
+        # Create table
+        table_data = [[
+            r['image'],
+            'Empty' if r['expected'] else 'Full',
+            'Empty' if r['predicted'] else 'Full',
+            f"{r['confidence']:.2f}",
+            f"{r['time_ms']:.1f}ms"
+        ] for r in results]
+        
+        headers = ['Image', 'Expected', 'Predicted', 'Confidence', 'Time']
+        print('\n' + tabulate(table_data, headers=headers, tablefmt='grid'))
+
+def main():
+    parser = argparse.ArgumentParser(description='Verify Snack Bot vision model')
+    parser.add_argument('--live', action='store_true', help='Run live camera tests')
+    parser.add_argument('--num-tests', type=int, default=5, 
+                       help='Number of live tests to run')
+    args = parser.parse_args()
+    
+    try:
+        verifier = ModelVerifier()
+        results = verifier.test_live(args.num_tests) if args.live \
+                 else verifier.test_sample_images()
+        verifier.print_results(results)
+        
+    except Exception as e:
+        logger.error(f"Verification failed: {e}")
+        raise
+
+if __name__ == "__main__":
+    main()
