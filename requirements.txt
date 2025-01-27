@@ -1,6 +1,15 @@
+# Core requirements
 opencv-python==4.8.1.78
 numpy==1.24.3
 boto3==1.28.44
 awsiotsdk==1.19.0
 RPi.GPIO==0.7.1
+
+# ML requirements
+tflite-runtime==2.14.0
+pillow==10.0.0
+
+# Development requirements
 pytest==7.4.2
+black==23.7.0
+pylint==2.17.5
