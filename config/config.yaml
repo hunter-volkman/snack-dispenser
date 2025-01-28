@@ -12,7 +12,7 @@ hardware:
 
 # Vision Configuration
 vision:
-  image_size: [224, 224]
+  image_size: [640, 480]
   confidence_threshold: 0.8
 
 # AWS Configuration
