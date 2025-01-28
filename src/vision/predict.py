@@ -10,6 +10,7 @@ import yaml
 import logging
 from pathlib import Path
 import os
+import time
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -93,35 +94,37 @@ class BowlStateDetector:
             logger.error(f"Error in prediction: {e}")
             return None, 0.0
     
-    def is_bowl_empty(self, num_frames=3):
+    def is_bowl_empty(self, num_frames=3, delay=0.5):
         """
-        Check if bowl is empty using multiple frames for robustness.
+        Check if the bowl is empty using multiple frames for robustness.
         Args:
             num_frames: Number of frames to check
+            delay: Delay (in seconds) between capturing frames
         Returns:
             tuple: (is_empty, confidence)
         """
         predictions = []
         confidences = []
-        
+
         # Get multiple predictions
         for _ in range(num_frames):
             is_empty, confidence = self.predict_single_frame()
             if is_empty is not None:
                 predictions.append(is_empty)
                 confidences.append(confidence)
-        
+            time.sleep(delay)  # Add delay between frames
+
         if not predictions:
             return False, 0.0
-        
+
         # Use majority voting for final prediction
         final_empty = sum(predictions) > len(predictions) / 2
         avg_confidence = sum(confidences) / len(confidences)
-        
+
         # Only return empty if confidence threshold is met
         if final_empty and avg_confidence < self.confidence_threshold:
             final_empty = False
-        
+
         return final_empty, avg_confidence
     
     def close(self):

@@ -1,40 +1,42 @@
 #!/usr/bin/env python3
 """
 Data collection script for Snack Bot vision system.
-Captures and saves labeled images for training.
+Captures and saves labeled images for training, with CLI argument support.
 """
 import cv2
 import time
 import yaml
 from pathlib import Path
 import logging
+import argparse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class DataCollector:
-    def __init__(self):
+    def __init__(self, config_path, storage_path):
         """Initialize data collector with configuration."""
-        with open('config/config.yaml', 'r') as f:
+        with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        self.data_dir = Path('data/training')
+        self.data_dir = Path(storage_path)
         self.camera = None
         self.image_size = tuple(self.config['vision']['image_size'])
     
     def setup_camera(self):
         """Initialize the camera."""
+        logger.info("Setting up the camera...")
         self.camera = cv2.VideoCapture(self.config['hardware']['camera']['device_id'])
         if not self.camera.isOpened():
             raise RuntimeError("Failed to open camera")
         
         # Set resolution
         self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 
-                       self.config['hardware']['camera']['resolution']['width'])
+                        self.config['hardware']['camera']['resolution']['width'])
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 
-                       self.config['hardware']['camera']['resolution']['height'])
+                        self.config['hardware']['camera']['resolution']['height'])
     
-    def collect_samples(self, label, num_samples=20):
+    def collect_samples(self, label, num_samples):
         """Collect labeled samples for training."""
         try:
             self.setup_camera()
@@ -48,58 +50,76 @@ class DataCollector:
             while count < num_samples:
                 ret, frame = self.camera.read()
                 if not ret:
+                    logger.warning("Failed to capture frame, retrying...")
                     continue
                 
-                # Show live preview
-                cv2.imshow('Preview', frame)
-                key = cv2.waitKey(1) & 0xFF
+                # Save image directly without showing preview
+                timestamp = time.strftime("%Y%m%d_%H%M%S")
+                filename = f"{label}_{timestamp}_{count:02d}.jpg"
+                save_path = save_dir / filename
                 
-                if key == ord('q'):
-                    break
-                elif key == ord(' '):  # Space bar
-                    # Save image
-                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    filename = f"{label}_{timestamp}_{count:02d}.jpg"
-                    save_path = save_dir / filename
-                    
-                    # Resize and save
-                    resized = cv2.resize(frame, self.image_size)
-                    cv2.imwrite(str(save_path), resized)
-                    
-                    count += 1
-                    logger.info(f"Saved image {count}/{num_samples}: {filename}")
-                    time.sleep(0.5)  # Prevent duplicate captures
-        
+                resized = cv2.resize(frame, self.image_size)
+                cv2.imwrite(str(save_path), resized)
+                
+                count += 1
+                logger.info(f"Saved image {count}/{num_samples}: {filename}")
+                time.sleep(0.5)  # Prevent duplicate captures
+                
+                # Log instead of showing GUI preview
+                logger.info(f"Captured frame {count} for label '{label}'")
+            
         finally:
             if self.camera is not None:
                 self.camera.release()
-            cv2.destroyAllWindows()
     
     def verify_dataset(self):
         """Verify collected dataset."""
-        stats = {'empty': 0, 'full': 0}
+        stats = {}
+        corrupted = []
         
-        for label in stats.keys():
-            label_dir = self.data_dir / label
-            if label_dir.exists():
-                stats[label] = len(list(label_dir.glob('*.jpg')))
+        for label_dir in self.data_dir.iterdir():
+            if label_dir.is_dir():
+                label = label_dir.name
+                stats[label] = 0
+                for image_path in label_dir.glob('*.jpg'):
+                    try:
+                        img = cv2.imread(str(image_path))
+                        if img is None:
+                            corrupted.append(image_path)
+                        else:
+                            stats[label] += 1
+                    except Exception as e:
+                        corrupted.append(image_path)
         
         logger.info("\nDataset Statistics:")
         for label, count in stats.items():
             logger.info(f"{label}: {count} images")
         
-        return stats
+        if corrupted:
+            logger.warning(f"\nFound {len(corrupted)} corrupted images:")
+            for path in corrupted:
+                logger.warning(f"- {path}")
+        
+        return stats, corrupted
 
 def main():
-    collector = DataCollector()
+    parser = argparse.ArgumentParser(description='Collect training data for Snack Bot.')
+    parser.add_argument('--config', default='config/config.yaml', help='Path to config file')
+    parser.add_argument('--storage', default='data/training', help='Path to store training data')
+    parser.add_argument('--label', help='Label for the data (e.g., "empty", "full")')
+    parser.add_argument('--samples', type=int, default=20, help='Number of samples to collect')
+    parser.add_argument('--verify', action='store_true', help='Verify collected dataset')
     
-    # Collect samples for each class
-    for label in ['empty', 'full']:
-        input(f"\nPress Enter to start collecting '{label}' samples...")
-        collector.collect_samples(label)
+    args = parser.parse_args()
     
-    # Verify dataset
-    collector.verify_dataset()
+    collector = DataCollector(args.config, args.storage)
+    
+    if args.verify:
+        collector.verify_dataset()
+    elif args.label:
+        collector.collect_samples(args.label, args.samples)
+    else:
+        logger.error("Please provide a label using --label or use --verify to verify the dataset.")
 
 if __name__ == "__main__":
     main()

@@ -25,8 +25,23 @@ class ModelVerifier:
         # Set paths relative to project root
         self.model_path = self.project_root / 'data/model/bowl_state_model.joblib'
         self.data_path = self.project_root / 'data/training'
-        self.image_size = (224, 224)
-        
+
+        # Load configuration
+        config_path = self.project_root / 'config' / 'config.yaml'
+        try:
+            with open(config_path, 'r') as f:
+                self.config = yaml.safe_load(f)
+        except Exception as e:
+            logger.error(f"Error loading config: {e}")
+            self.config = {}
+
+         # Set paths relative to project root
+        self.model_path = self.project_root / 'data/model/bowl_state_model.joblib'
+        self.data_path = self.project_root / 'data/training'
+
+        # Use image size from config or default to (640, 480)
+        self.image_size = tuple(self.config.get('vision', {}).get('image_size', [640, 480]))
+
         logger.info(f"Project root: {self.project_root}")
         logger.info(f"Looking for model at: {self.model_path}")
         

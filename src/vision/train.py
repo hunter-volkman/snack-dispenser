@@ -36,7 +36,9 @@ class BowlStateTrainer:
         except Exception as e:
             logger.error(f"Error loading config: {e}")
             # Default values if config fails
-            self.image_size = (224, 224)
+            # self.image_size = (224, 224)
+            self.image_size = tuple(config['vision']['image_size']) if 'vision' in config and 'image_size' in config['vision'] else (640, 480)
+
     
     def load_dataset(self):
         """Load and prepare training data."""
