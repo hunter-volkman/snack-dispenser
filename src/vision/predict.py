@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
 Bowl state detection for Snack Bot
-Uses trained model to detect if bowl is empty or full
+Uses trained model to detect if bowl is empty or full.
+If the bowl is predicted to be empty, rotate the motor 200 steps.
+This script is intended to run once and exit (e.g. via cron).
 """
+
 import cv2
 import numpy as np
 import joblib
@@ -11,6 +14,12 @@ import logging
 from pathlib import Path
 import os
 import time
+import sys
+
+# Import MotorController from your control.py
+# Make sure "src" is recognized as a package (add __init__.py in src/).
+# Then run: python -m src.vision.predict (from project root).
+from src.motor.control import MotorController
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,10 +31,11 @@ class BowlStateDetector:
         self.load_config()
         self.load_model()
         self.setup_camera()
+
         self.last_state = None
         self.state_confidence = 0.0
         self.consecutive_opposite_predictions = 0
-    
+
     def load_model(self):
         """Load the trained model."""
         try:
@@ -63,7 +73,7 @@ class BowlStateDetector:
             self.frame_buffer_size = 3
     
     def setup_camera(self):
-        """Initialize the camera."""
+        """Initialize the camera once."""
         self.camera = cv2.VideoCapture(self.camera_id)
         if not self.camera.isOpened():
             raise RuntimeError("Failed to open camera")
@@ -73,18 +83,22 @@ class BowlStateDetector:
         self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, self.camera_height)
         self.camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         
-        # Clear buffer
-        for _ in range(5):
-            self.camera.read()
-    
+        # (Optional) flush buffer at start
+        self.flush_camera_buffer(num_frames=5)
+
+    def flush_camera_buffer(self, num_frames=5):
+        """
+        Discard a certain number of frames from the camera buffer
+        so the next read() is fresh.
+        """
+        for _ in range(num_frames):
+            self.camera.grab()
+
     def preprocess_frame(self, frame):
         """Preprocess frame for model input."""
         try:
-            # Resize to expected input size
             resized = cv2.resize(frame, self.image_size)
-            # Convert to RGB (model was trained on RGB)
             rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-            # Flatten for model input
             flattened = rgb.flatten().reshape(1, -1)
             return flattened
         except Exception as e:
@@ -92,12 +106,8 @@ class BowlStateDetector:
             return None
     
     def predict_single_frame(self):
-        """Capture and predict a single frame."""
+        """Predict on a single frame (assumes camera already open)."""
         try:
-            # Clear buffer frames
-            for _ in range(2):
-                self.camera.grab()
-            
             ret, frame = self.camera.read()
             if not ret or frame is None:
                 logger.error("Failed to capture frame")
@@ -107,27 +117,26 @@ class BowlStateDetector:
             if processed is None:
                 return None, 0.0
             
-            # Get model prediction
+            # Predict probabilities
             prediction = self.model.predict_proba(processed)[0]
-            is_empty = prediction[0] > 0.5
+            # Assume prediction[0] is "empty" probability, prediction[1] is "full"
+            is_empty = (prediction[0] > 0.5)
             confidence = max(prediction)
             
             return is_empty, confidence
-            
         except Exception as e:
             logger.error(f"Error in prediction: {e}")
             return None, 0.0
-    
+
     def is_bowl_empty(self):
         """
         Check if bowl is empty using multiple frames for robustness.
         Returns:
-            tuple: (is_empty, confidence)
+            (is_empty, confidence)
         """
         predictions = []
         confidences = []
         
-        # Get multiple predictions
         for _ in range(self.frame_buffer_size):
             is_empty, confidence = self.predict_single_frame()
             if is_empty is not None:
@@ -135,9 +144,9 @@ class BowlStateDetector:
                 confidences.append(confidence)
         
         if not predictions:
+            # If we failed to get any frames, fallback to last known state or default.
             return self.last_state or False, 0.0
         
-        # Calculate current prediction
         current_empty = sum(predictions) > len(predictions) / 2
         avg_confidence = sum(confidences) / len(confidences)
         
@@ -160,26 +169,43 @@ class BowlStateDetector:
     
     def close(self):
         """Release camera resources."""
-        if hasattr(self, 'camera'):
+        if hasattr(self, 'camera') and self.camera is not None:
             self.camera.release()
 
 def main():
-    """Test the detector."""
+    """
+    Run one detection cycle, rotate motor if bowl is EMPTY.
+    Adjust your cron or systemd schedule to call this script.
+    """
     detector = BowlStateDetector()
+    motor = MotorController()  # Create a motor controller instance
+    
     try:
-        print("\nStarting bowl state detection. Press Ctrl+C to exit.")
-        while True:
-            is_empty, confidence = detector.is_bowl_empty()
-            state = "empty" if is_empty else "full"
-            logger.info(f"Bowl is {state} (confidence: {confidence:.2f})")
-            
-            user_input = input("\nCheck again? (y/n): ")
-            if user_input.lower() != 'y':
-                break
+        # Flush the buffer right before capturing new frames
+        detector.flush_camera_buffer(num_frames=5)
+
+        # Run inference
+        is_empty, confidence = detector.is_bowl_empty()
+        state = "empty" if is_empty else "full"
+        logger.info(f"Bowl is {state} (confidence: {confidence:.2f})")
+
+        # If the bowl is predicted to be EMPTY, rotate the motor 200 steps
+        if is_empty:
+            logger.info("Bowl is empty; rotating motor 200 steps...")
+            motor.enable_motor()
+            motor.step(200, rpm=30)
+            motor.disable_motor()
+        else:
+            logger.info("Bowl is full; doing nothing with motor.")
+    
     except KeyboardInterrupt:
-        print("\nStopping detection...")
+        logger.info("Interrupted by user.")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
     finally:
+        # Clean up
         detector.close()
+        motor.cleanup()
 
 if __name__ == "__main__":
     main()

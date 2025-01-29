@@ -21,7 +21,7 @@ class MotorController:
     def load_config(self):
         """Load configuration from yaml."""
         try:
-            with open('~/snack-bot/config/config.yaml', 'r') as f:
+            with open('config.yaml', 'r') as f:
                 config = yaml.safe_load(f)
                 self.step_pin = config['hardware']['motor']['step_pin']
                 self.dir_pin = config['hardware']['motor']['dir_pin']
@@ -52,18 +52,21 @@ class MotorController:
         """Disable motor driver."""
         GPIO.output(self.en_pin, GPIO.HIGH)
     
-    def step(self, steps, delay=0.005):
+    def step(self, steps, rpm=30, steps_per_rev=200):
         """
-        Perform specified number of steps.
-        Args:
-            steps: Number of steps to move
-            delay: Delay between steps (seconds)
+        Perform specified number of steps at a target RPM.
+        :param steps: how many steps to move
+        :param rpm: how many revolutions per minute
+        :param steps_per_rev: how many steps in one full revolution
         """
+        # Calculate delay between steps (seconds) for the given RPM
+        delay_per_step = 60.0 / (rpm * steps_per_rev)  # e.g. ~0.01s for 30 RPM if 200 steps/rev
+
         for _ in range(steps):
             GPIO.output(self.step_pin, GPIO.HIGH)
-            time.sleep(delay)
+            time.sleep(delay_per_step)
             GPIO.output(self.step_pin, GPIO.LOW)
-            time.sleep(delay)
+            time.sleep(delay_per_step)
     
     def dispense(self, amount=1):
         """

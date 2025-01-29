@@ -8,7 +8,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 import awsiot.greengrasscoreipc
 from awsiot.greengrasscoreipc.model import (
-    PublishToIoTCore,
+    PublishMessage,
     QOS
 )
 
