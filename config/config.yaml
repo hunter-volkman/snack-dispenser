@@ -3,17 +3,24 @@ hardware:
   camera:
     device_id: 0
     resolution:
-      width: 1280
-      height: 720
+      width: 640
+      height: 480
   motor:
-    dir_pin: 15   # GPIO22
-    step_pin: 16  # GPIO23
-    en_pin: 18    # GPIO24
+    # GPIO22
+    dir_pin: 15   
+    # GPIO23
+    step_pin: 16  
+    # GPIO24
+    en_pin: 18
 
 # Vision Configuration
 vision:
-  image_size: [640, 480]
-  confidence_threshold: 0.8
+  image_size: [224, 224]
+  confidence_threshold: 0.7
+  # Number of consecutive changes needed to switch states
+  required_consecutive_changes: 2  
+  # Number of frames to average for each prediction
+  frame_buffer_size: 3
 
 # AWS Configuration
 aws:
