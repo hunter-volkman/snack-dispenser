@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""
-Main Greengrass component application for Snack Bot
-"""
 import os
 import sys
 import time
 import json
 import logging
 import threading
-import signal
 from concurrent.futures import ThreadPoolExecutor
 import awsiot.greengrasscoreipc
 from awsiot.greengrasscoreipc.model import (
@@ -16,12 +12,14 @@ from awsiot.greengrasscoreipc.model import (
     QOS
 )
 
-# Add the vision module to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from vision.predict import BowlStateDetector
 from motor.control import MotorController
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 10
@@ -31,14 +29,19 @@ class SnackBotComponent:
         """Initialize the Snack Bot component."""
         self.ipc_client = awsiot.greengrasscoreipc.connect()
         
-        # Load component configuration
-        self.check_interval = 5  # Default check interval
-        self.confidence_threshold = 0.8  # Default confidence threshold
-        self.load_configuration()
+        # Initialize state tracking
+        self.last_state = None
+        self.last_dispense_time = 0
+        self.min_dispense_interval = 30  # Minimum seconds between dispenses
         
-        # Initialize vision and motor systems
-        self.detector = BowlStateDetector()
-        self.motor = MotorController()
+        # Load component configuration
+        self.check_interval = 2  # Reduced check interval for responsiveness
+        self.confidence_threshold = 0.7  # Slightly lower threshold
+        self.consecutive_empty_required = 2  # Require multiple empty detections
+        self.consecutive_empty_count = 0
+        
+        # Initialize systems
+        self._init_systems()
         
         # Control flags
         self.running = True
@@ -48,14 +51,24 @@ class SnackBotComponent:
         signal.signal(signal.SIGTERM, self.stop)
         signal.signal(signal.SIGINT, self.stop)
     
-    def load_configuration(self):
-        """Load component configuration."""
-        try:
-            # In a real component, this would load from Greengrass configuration
-            # For now, we'll use default values
-            pass
-        except Exception as e:
-            logger.error(f"Error loading configuration: {e}")
+    def _init_systems(self):
+        """Initialize vision and motor systems with retry logic."""
+        max_retries = 3
+        retry_delay = 5
+        
+        for attempt in range(max_retries):
+            try:
+                self.detector = BowlStateDetector()
+                self.motor = MotorController()
+                logger.info("Systems initialized successfully")
+                return
+            except Exception as e:
+                logger.error(f"Attempt {attempt + 1}/{max_retries} failed: {e}")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    raise
     
     def publish_state(self, is_empty, confidence):
         """Publish bowl state to IoT Core."""
@@ -63,7 +76,8 @@ class SnackBotComponent:
             message = {
                 "timestamp": int(time.time()),
                 "is_empty": is_empty,
-                "confidence": confidence
+                "confidence": confidence,
+                "consecutive_empty": self.consecutive_empty_count
             }
             
             request = PublishToIoTCore(
@@ -80,23 +94,56 @@ class SnackBotComponent:
         except Exception as e:
             logger.error(f"Error publishing message: {e}")
     
+    def should_dispense(self, is_empty, confidence):
+        """Determine if we should dispense based on current state and history."""
+        current_time = time.time()
+        
+        # Don't dispense if we recently dispensed
+        if current_time - self.last_dispense_time < self.min_dispense_interval:
+            return False
+        
+        # Update consecutive empty count
+        if is_empty and confidence > self.confidence_threshold:
+            self.consecutive_empty_count += 1
+        else:
+            self.consecutive_empty_count = 0
+        
+        # Only dispense if we've seen multiple consecutive empty states
+        return (self.consecutive_empty_count >= self.consecutive_empty_required)
+    
     def dispense_snack(self):
-        """Dispense a snack."""
+        """Dispense a snack with improved error handling."""
         if self.is_dispensing:
             return
         
         try:
             self.is_dispensing = True
+            logger.info("Starting dispense cycle")
+            
+            # Dispense
             self.motor.dispense()
-            # Publish dispense event
-            self.publish_state(False, 1.0)  # Bowl should be full after dispensing
+            self.last_dispense_time = time.time()
+            self.consecutive_empty_count = 0
+            
+            # Wait briefly then verify bowl state
+            time.sleep(2)
+            is_empty, confidence = self.detector.is_bowl_empty()
+            
+            if is_empty and confidence > self.confidence_threshold:
+                logger.warning("Bowl still empty after dispensing!")
+            else:
+                logger.info("Dispense successful")
+            
+            # Publish updated state
+            self.publish_state(is_empty, confidence)
+            
         except Exception as e:
-            logger.error(f"Error dispensing: {e}")
+            logger.error(f"Error during dispensing: {e}")
         finally:
             self.is_dispensing = False
     
     def run(self):
-        """Main component loop."""
+        """Main component loop with improved error handling."""
         logger.info("Starting Snack Bot component...")
         
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -104,16 +151,18 @@ class SnackBotComponent:
                 try:
                     # Check bowl state
                     is_empty, confidence = self.detector.is_bowl_empty()
-                    logger.info(f"Bowl state: {'empty' if is_empty else 'full'} "
-                              f"(confidence: {confidence:.2f})")
+                    
+                    # Log state changes
+                    if self.last_state != is_empty:
+                        logger.info(f"Bowl state changed: {'empty' if is_empty else 'full'} "
+                                  f"(confidence: {confidence:.2f})")
+                        self.last_state = is_empty
                     
                     # Publish state
                     self.publish_state(is_empty, confidence)
                     
-                    # Dispense if empty
-                    if (is_empty and 
-                        confidence > self.confidence_threshold and 
-                        not self.is_dispensing):
+                    # Check if we should dispense
+                    if self.should_dispense(is_empty, confidence):
                         executor.submit(self.dispense_snack)
                     
                     # Wait before next check
@@ -133,13 +182,23 @@ class SnackBotComponent:
             self.motor.cleanup()
 
 def main():
-    component = SnackBotComponent()
-    try:
-        component.run()
-    except Exception as e:
-        logger.error(f"Component error: {e}")
-    finally:
-        component.stop()
+    """Run the component with improved error handling."""
+    max_retries = 3
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            component = SnackBotComponent()
+            component.run()
+            break
+        except Exception as e:
+            logger.error(f"Component error (attempt {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                logger.error("Max retries reached, exiting...")
+                raise
 
 if __name__ == "__main__":
     main()

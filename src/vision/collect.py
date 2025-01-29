@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Data collection script for Snack Bot vision system.
-Captures and saves labeled images for training, with CLI argument support.
+Captures and saves labeled images for training.
 """
 import cv2
 import time
@@ -25,16 +25,15 @@ class DataCollector:
     
     def setup_camera(self):
         """Initialize the camera."""
-        logger.info("Setting up the camera...")
         self.camera = cv2.VideoCapture(self.config['hardware']['camera']['device_id'])
         if not self.camera.isOpened():
             raise RuntimeError("Failed to open camera")
         
-        # Set resolution
-        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, 
-                        self.config['hardware']['camera']['resolution']['width'])
-        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 
-                        self.config['hardware']['camera']['resolution']['height'])
+        # Set camera resolution from config
+        cam_width = self.config['hardware']['camera']['resolution']['width']
+        cam_height = self.config['hardware']['camera']['resolution']['height']
+        self.camera.set(cv2.CAP_PROP_FRAME_WIDTH, cam_width)
+        self.camera.set(cv2.CAP_PROP_FRAME_HEIGHT, cam_height)
     
     def collect_samples(self, label, num_samples):
         """Collect labeled samples for training."""
@@ -44,29 +43,28 @@ class DataCollector:
             save_dir.mkdir(parents=True, exist_ok=True)
             
             logger.info(f"Collecting {num_samples} samples for '{label}' state")
-            logger.info("Press SPACE to capture, 'q' to quit")
-            
             count = 0
+
+            # Clear any buffered frames
+            for _ in range(3):
+                self.camera.read()
+
             while count < num_samples:
                 ret, frame = self.camera.read()
                 if not ret:
                     logger.warning("Failed to capture frame, retrying...")
                     continue
                 
-                # Save image directly without showing preview
+                # Resize to training size and save
+                resized = cv2.resize(frame, self.image_size)
                 timestamp = time.strftime("%Y%m%d_%H%M%S")
                 filename = f"{label}_{timestamp}_{count:02d}.jpg"
                 save_path = save_dir / filename
-                
-                resized = cv2.resize(frame, self.image_size)
                 cv2.imwrite(str(save_path), resized)
                 
                 count += 1
                 logger.info(f"Saved image {count}/{num_samples}: {filename}")
                 time.sleep(0.5)  # Prevent duplicate captures
-                
-                # Log instead of showing GUI preview
-                logger.info(f"Captured frame {count} for label '{label}'")
             
         finally:
             if self.camera is not None:
@@ -87,6 +85,9 @@ class DataCollector:
                         if img is None:
                             corrupted.append(image_path)
                         else:
+                            h, w = img.shape[:2]
+                            if (w, h) != self.image_size:
+                                logger.warning(f"Wrong size for {image_path}: {w}x{h}, expected: {self.image_size}")
                             stats[label] += 1
                     except Exception as e:
                         corrupted.append(image_path)

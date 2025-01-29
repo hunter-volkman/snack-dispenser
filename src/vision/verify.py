@@ -10,6 +10,7 @@ import time
 import logging
 import argparse
 import os
+import yaml
 from pathlib import Path
 from tabulate import tabulate
 
@@ -19,13 +20,8 @@ logger = logging.getLogger(__name__)
 class ModelVerifier:
     def __init__(self):
         """Initialize verifier with project configuration."""
-        # Get project root directory (2 levels up from this script)
         self.project_root = Path(__file__).parent.parent.parent
         
-        # Set paths relative to project root
-        self.model_path = self.project_root / 'data/model/bowl_state_model.joblib'
-        self.data_path = self.project_root / 'data/training'
-
         # Load configuration
         config_path = self.project_root / 'config' / 'config.yaml'
         try:
@@ -33,27 +29,19 @@ class ModelVerifier:
                 self.config = yaml.safe_load(f)
         except Exception as e:
             logger.error(f"Error loading config: {e}")
-            self.config = {}
+            raise
 
-         # Set paths relative to project root
         self.model_path = self.project_root / 'data/model/bowl_state_model.joblib'
         self.data_path = self.project_root / 'data/training'
-
-        # Use image size from config or default to (640, 480)
-        self.image_size = tuple(self.config.get('vision', {}).get('image_size', [640, 480]))
-
-        logger.info(f"Project root: {self.project_root}")
-        logger.info(f"Looking for model at: {self.model_path}")
+        self.image_size = tuple(self.config['vision']['image_size'])
         
+        logger.info(f"Using image size: {self.image_size}")
         self.load_model()
     
     def load_model(self):
         """Load the trained model."""
         if not self.model_path.exists():
-            raise FileNotFoundError(
-                f"Model not found at {self.model_path}\n"
-                f"Current directory: {os.getcwd()}"
-            )
+            raise FileNotFoundError(f"Model not found at {self.model_path}")
         self.model = joblib.load(self.model_path)
         logger.info("Model loaded successfully")
     
@@ -79,7 +67,6 @@ class ModelVerifier:
         """Test model with saved training images."""
         results = []
         
-        # Test both empty and full images
         for state in ['empty', 'full']:
             image_dir = self.data_path / state
             if not image_dir.exists():
@@ -111,47 +98,33 @@ class ModelVerifier:
         if not cap.isOpened():
             raise RuntimeError("Failed to open camera")
         
-        logger.info("\nLive Testing")
-        logger.info("Press SPACE to capture test image")
-        logger.info("Press 'e' to mark as empty, 'f' to mark as full")
-        logger.info("Press 'q' to quit\n")
-        
         try:
-            while len(results) < num_tests:
+            for i in range(num_tests):
+                # Clear buffer
+                for _ in range(3):
+                    cap.read()
+                
                 ret, frame = cap.read()
                 if not ret:
+                    logger.error("Failed to capture frame")
                     continue
                 
-                # Show live preview
-                cv2.imshow('Preview', frame)
-                key = cv2.waitKey(1) & 0xFF
+                # Run prediction
+                is_empty, confidence, inference_time = self.predict(frame)
+                state = "empty" if is_empty else "full"
+                logger.info(f"Test {i+1}: Predicted {state} (confidence: {confidence:.2f})")
                 
-                if key == ord('q'):
-                    break
-                elif key == ord(' '):
-                    # Run prediction
-                    is_empty, confidence, inference_time = self.predict(frame)
-                    
-                    # Show result and wait for label
-                    logger.info(f"\nPredicted: {'empty' if is_empty else 'full'} "
-                              f"(confidence: {confidence:.2f})")
-                    logger.info("Press 'e' for empty, 'f' for full")
-                    
-                    while True:
-                        label_key = cv2.waitKey(0) & 0xFF
-                        if label_key in [ord('e'), ord('f')]:
-                            actual_empty = label_key == ord('e')
-                            results.append({
-                                'image': f'live_{len(results)}',
-                                'expected': actual_empty,
-                                'predicted': is_empty,
-                                'confidence': confidence,
-                                'time_ms': inference_time * 1000
-                            })
-                            break
+                results.append({
+                    'image': f'live_{i}',
+                    'predicted': is_empty,
+                    'confidence': confidence,
+                    'time_ms': inference_time * 1000
+                })
+                
+                time.sleep(1)  # Wait between captures
+                
         finally:
             cap.release()
-            cv2.destroyAllWindows()
         
         return results
     
@@ -162,27 +135,34 @@ class ModelVerifier:
             return
         
         # Calculate statistics
-        correct = sum(1 for r in results if r['expected'] == r['predicted'])
-        accuracy = correct / len(results) * 100
+        if 'expected' in results[0]:
+            correct = sum(1 for r in results if r['expected'] == r['predicted'])
+            accuracy = correct / len(results) * 100
+            logger.info(f"Accuracy: {accuracy:.1f}%")
+        
         avg_time = sum(r['time_ms'] for r in results) / len(results)
         avg_conf = sum(r['confidence'] for r in results) / len(results)
         
-        # Print summary
-        logger.info("\nTest Results:")
-        logger.info(f"Accuracy: {accuracy:.1f}%")
         logger.info(f"Average inference time: {avg_time:.1f}ms")
         logger.info(f"Average confidence: {avg_conf:.2f}")
         
         # Create table
-        table_data = [[
-            r['image'],
-            'Empty' if r['expected'] else 'Full',
-            'Empty' if r['predicted'] else 'Full',
-            f"{r['confidence']:.2f}",
-            f"{r['time_ms']:.1f}ms"
-        ] for r in results]
+        table_data = []
+        for r in results:
+            row = [
+                r['image'],
+                'Empty' if r['predicted'] else 'Full',
+                f"{r['confidence']:.2f}",
+                f"{r['time_ms']:.1f}ms"
+            ]
+            if 'expected' in r:
+                row.insert(1, 'Empty' if r['expected'] else 'Full')
+            table_data.append(row)
         
-        headers = ['Image', 'Expected', 'Predicted', 'Confidence', 'Time']
+        headers = ['Image', 'Predicted', 'Confidence', 'Time']
+        if 'expected' in results[0]:
+            headers.insert(1, 'Expected')
+        
         print('\n' + tabulate(table_data, headers=headers, tablefmt='grid'))
 
 def main():
