@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Verify Snack Bot installation and dependencies
+Verify Edge Snack Dispenser installation and dependencies
 """
 import sys
 import cv2
@@ -58,7 +58,7 @@ def main():
     ]
     
     all_passed = True
-    print("\n🤖 Running Snack Bot system tests...\n")
+    print("\n🤖 Running Edge Snack Dispenser system tests...\n")
     
     for name, test_func in tests:
         success, message = test_func()
