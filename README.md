@@ -1,137 +1,142 @@
-# Snack Bot - AWS Greengrass Demo
+# Edge Snack Dispenser
 
-A demo project showing how to build an automated snack dispenser using AWS Greengrass, computer vision, and a Raspberry Pi. The system monitors a bowl using computer vision and automatically dispenses food when it's empty.
+An intelligent snack dispenser using computer vision and edge computing. Supports deployment on AWS Greengrass, Azure IoT Edge, or Viam.
 
-## Project Overview
+## Features
 
-```
-snack-bot/
-├── src/                        # Source code
-│   ├── vision/                 # Vision processing components
-│   ├── motor/                  # Motor control components
-│   └── utils/                  # Shared utilities
-├── scripts/                    # Setup and deployment scripts
-├── config/                     # Configuration files
-├── recipes/                    # Greengrass component recipes
-├── tests/                      # Test suites
-└── docs/                       # Documentation
-```
+- Computer vision-powered bowl state detection
+- Automated snack dispensing via stepper motor
+- Multi-cloud deployment options:
+  - AWS Greengrass components
+  - Azure IoT Edge modules
+  - Viam standalone or as control plane
+- Real-time monitoring and remote control
 
-## Key Features
+## Requirements
 
-- Computer vision-based bowl state detection
-- Automated food dispensing via stepper motor
-- AWS Greengrass component architecture
-- S3 integration for model and image storage
-- Local image processing at the edge
-
-## Hardware Requirements
-
-- Raspberry Pi 4 (2GB+ RAM recommended)
-- USB Webcam (tested with Logitech C920)
-- NEMA 17 Stepper Motor with DRV8825 Driver
-- Power supply for motor
+### Hardware
+- Raspberry Pi 4 (2GB+ RAM)
+- USB Camera (tested with Logitech C920)
+- NEMA 17 Stepper Motor + DRV8825 Driver
+- 12V Power Supply
 - Snack bowl and dispenser mechanism
+
+### Software
+- Raspberry Pi OS (64-bit)
+- Python 3.7+
+- AWS CLI, Azure CLI, or Viam CLI (based on deployment)
 
 ## Quick Start
 
-1. Set up AWS environment:
+1. Clone and setup:
 ```bash
-# Configure AWS credentials
-aws configure
+git clone https://github.com/yourusername/edge-snack-dispenser.git
+cd edge-snack-dispenser
+./scripts/setup.sh
+```
 
-# Create required resources
+2. Test hardware:
+```bash
+python3 tests/test_hardware.py
+```
+
+3. Choose deployment platform:
+
+AWS Greengrass:
+```bash
 ./scripts/setup_aws.sh
+./scripts/deploy_component_aws.sh
 ```
 
-2. Install Greengrass on Raspberry Pi:
+Azure IoT Edge:
 ```bash
-# Run base installation
-./scripts/setup_greengrass.sh
-
-# Configure components
-./scripts/configure_components.sh
+./scripts/setup_azure.sh
+./scripts/deploy_module_azure.sh
 ```
 
-3. Deploy components:
+Viam:
 ```bash
-# Package and deploy
-./scripts/deploy.sh
+./scripts/setup_viam.sh
 ```
 
-## Development Process
+## Project Structure
+```
+edge-snack-dispenser/
+├── aws/                # AWS Greengrass implementation
+├── azure/              # Azure IoT Edge implementation
+├── viam/               # Viam integration
+├── common/             # Shared code
+│   ├── hardware/       # Hardware abstraction
+│   ├── vision/         # ML/vision code
+│   └── config/         # Configuration
+├── docs/               # Documentation
+├── scripts/            # Setup & deployment
+├── tests/              # Test suites
+├── utils/              # Training utilities
+└── data/               # Training data & models
+```
 
-1. **Model Training**
-   ```bash
-   # Collect training data
-   python src/vision/data_collector.py --label empty --samples 50
-   python src/vision/data_collector.py --label full --samples 50
+## Development
 
-   # Train model
-   python src/vision/model_trainer.py
-   ```
-
-2. **Component Testing**
-   ```bash
-   # Test vision component
-   python src/vision/vision_processor.py --test
-
-   # Test motor component
-   python src/motor/motor_controller.py --test
-   ```
-
-3. **Deployment**
-   ```bash
-   # Create deployment package
-   ./scripts/prepare_deployment.sh
-
-   # Deploy to device
-   ./scripts/deploy.sh
-   ```
-
-## Monitoring and Debugging
-
-View component logs:
+### Train Vision Model
 ```bash
-sudo tail -f /greengrass/v2/logs/com.peanutbot.vision.log
-sudo tail -f /greengrass/v2/logs/com.peanutbot.motor.log
+# Collect training data
+python3 utils/collect.py --label empty --samples 20
+python3 utils/collect.py --label full --samples 20
+
+# Train model
+python3 utils/train.py
+
+# Verify model
+python3 utils/verify.py --live
 ```
 
-Check component status:
+### Test Components
 ```bash
-sudo greengrass-cli component list
+# Run test suite
+python3 -m pytest tests/
+
+# Hardware tests
+python3 tests/test_hardware.py
 ```
 
-## AWS Services Used
+### Monitoring
 
-- AWS IoT Core: Device connectivity
-- AWS Greengrass: Edge runtime
-- Amazon S3: Storage
-- IAM: Access management
-- CloudWatch: Logging and monitoring
-
-## Project Structure Details
-
-- `src/vision/`: Computer vision and ML components
-- `src/motor/`: Motor control and hardware interface
-- `src/utils/`: Shared utilities and helpers
-- `scripts/`: Automation and deployment scripts
-- `config/`: AWS and component configurations
-- `recipes/`: Greengrass component recipes
-- `tests/`: Unit and integration tests
-- `docs/`: Additional documentation
-
-## Local Development
-
-1. Set up Python environment:
+AWS Greengrass:
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+sudo tail -f /greengrass/v2/logs/com.edgesnackdispenser.core.log
 ```
 
-2. Configure local settings:
+Azure IoT Edge:
 ```bash
-cp config/local-config.template.yaml config/local-config.yaml
-# Edit config/local-config.yaml with your settings
+iotedge logs edgesnackdispenser
 ```
+
+Viam:
+- Monitor via Viam web interface
+
+## Documentation
+
+- [Setup Guide](docs/SETUP.md)
+- [Code Documentation](docs/CODE.md)
+- [AWS Greengrass Guide](docs/AWS_GREENGRASS.md)
+- [Azure IoT Edge Guide](docs/AZURE.md)
+- [Viam Integration](docs/VIAM.md)
+
+## Contributing
+
+1. Fork repository
+2. Create feature branch
+3. Follow code style guide
+4. Submit pull request
+
+## License
+
+MIT License - See LICENSE file
+
+## Support
+
+- Report issues on GitHub
+- AWS Greengrass docs: [Link]
+- Azure IoT Edge docs: [Link]
+- Viam docs: [Link]
