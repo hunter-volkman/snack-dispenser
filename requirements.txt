@@ -9,7 +9,7 @@ psutil==6.1.0                     # Used in system monitoring tests
 RPi.GPIO==0.7.1                   # Required for motor control
 
 # AWS IoT Core
-awsiotsdk==1.19.0                 # Used in aws/main.py for IoT Core communication
+awsiotsdk==1.22.1                         # Used in aws/main.py for IoT Core communication
 
 # Testing and utils
 pytest==7.4.2                     # For running test suite
