@@ -26,6 +26,10 @@ set -e
 #
 # ====================================================================
 
+
+# Disable AWS CLI pager
+export AWS_PAGER=""
+
 # Default: run both parts
 RUN_CONFIGURE_AWS=true
 RUN_SETUP_LOCAL=true
@@ -142,9 +146,6 @@ EOF
   echo "Next, proceed with local environment setup."
 fi
 
-# -------------------------------
-# Part 2: Local Environment Setup for Greengrass
-# -------------------------------
 if [ "$RUN_SETUP_LOCAL" = true ]; then
   echo "------------------------------------------"
   echo "Setting up local environment for Edge Snack Dispenser"
@@ -157,10 +158,52 @@ if [ "$RUN_SETUP_LOCAL" = true ]; then
 
   echo "Updating system and installing required packages..."
   sudo apt update && sudo apt upgrade -y
-  sudo apt install -y python3-pip python3-venv awscli libopenjp2-7 libilmbase23 \
-      libopenexr-dev libavcodec-dev libavformat-dev libswscale-dev libv4l-dev libgtk-3-0 \
-      libwebp-dev fswebcam
+  sudo apt install -y \
+      python3-pip \
+      python3-venv \
+      awscli \
+      libopenjp2-7 \
+      libopenexr-dev \
+      libavcodec-dev \
+      libavformat-dev \
+      libswscale-dev \
+      libv4l-dev \
+      libgtk-3-0 \
+      libwebp-dev \
+      fswebcam \
+      git \
+      cmake \
+      build-essential \
+      default-jdk  # Required for Greengrass
 
+  # Install Greengrass V2
+  echo "Installing AWS IoT Greengrass V2..."
+  
+  # Download and extract Greengrass installer
+  curl -s https://d2s8p88vqu9w66.cloudfront.net/releases/greengrass-nucleus-latest.zip > greengrass-nucleus-latest.zip
+  unzip greengrass-nucleus-latest.zip -d GreengrassInstaller && rm greengrass-nucleus-latest.zip
+
+  # Get AWS region and account ID
+  REGION="us-east-1"  # Or use AWS_DEFAULT_REGION environment variable
+  ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+  THING_NAME="EdgeSnackDispenserCoreThing"
+
+  # Install Greengrass
+  sudo -E java -Droot="/greengrass/v2" \
+    -Dlog.store=FILE \
+    -jar ./GreengrassInstaller/lib/Greengrass.jar \
+    --aws-region $REGION \
+    --thing-name $THING_NAME \
+    --thing-group-name EdgeSnackDispenserCoreThingGroup \
+    --component-default-user pi:pi \
+    --provision true \
+    --setup-system-service true \
+    --deploy-dev-tools true
+
+  # Clean up installer
+  rm -rf GreengrassInstaller
+
+  # Create Python virtual environment and install dependencies
   if [ ! -d "venv" ]; then
       echo "Creating Python virtual environment..."
       python3 -m venv venv
@@ -172,8 +215,27 @@ if [ "$RUN_SETUP_LOCAL" = true ]; then
   pip install -r requirements.txt
 
   echo "Local environment setup completed successfully!"
+
+  # Verify Greengrass installation
+  echo "Verifying Greengrass installation..."
+  if systemctl is-active greengrass.service >/dev/null 2>&1; then
+      echo "✅ Greengrass service is running"
+  else
+      echo "❌ Greengrass service is not running. Starting it now..."
+      sudo systemctl start greengrass.service
+  fi
+
+  # Show Greengrass logs
+  echo "Recent Greengrass logs:"
+  sudo tail -n 20 /greengrass/v2/logs/greengrass.log
 fi
 
 echo "------------------------------------------"
-echo "Combined AWS setup completed."
+echo "AWS IoT Greengrass setup completed."
 echo "You can now run further deployment steps (e.g., deploy_component_aws.sh) as needed."
+echo ""
+echo "To monitor Greengrass logs:"
+echo "sudo tail -f /greengrass/v2/logs/greengrass.log"
+echo ""
+echo "To check Greengrass service status:"
+echo "sudo systemctl status greengrass.service"
