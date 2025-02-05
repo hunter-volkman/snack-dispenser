@@ -4,18 +4,13 @@ Verify AWS and Greengrass setup
 """
 import subprocess
 import sys
-import base64
 import json
-import tempfile
 from pathlib import Path
 
-
+# AWS Configuration
 AWS_REGION = "us-east-1"
-# Change if using a non-default profile
-AWS_PROFILE = "default"  
-THING_NAME = "EdgeSnackDispenserCoreThing"
+AWS_PROFILE = "default"
 TEST_TOPIC = "test/connectivity"
-
 
 def check_greengrass_service():
     """Check if Greengrass service is running"""
@@ -40,17 +35,21 @@ def check_credentials():
     ]
     
     missing = [file for file in required_files if not (cred_dir / file).exists()]
-    
     return len(missing) == 0, f"Missing files: {', '.join(missing)}" if missing else "All credentials exist"
 
 def check_aws_connectivity():
     """Test AWS IoT connectivity"""
     try:
-        result = subprocess.run(
-            ['aws', 'iot', 'describe-endpoint', '--endpoint-type', 'iot:Data-ATS', '--query', 'endpointAddress', '--output', 'text'],
-            capture_output=True,
-            text=True
-        )
+        cmd = [
+            'aws', 'iot', 'describe-endpoint',
+            '--endpoint-type', 'iot:Data-ATS',
+            '--query', 'endpointAddress',
+            '--output', 'text'
+        ]
+        if AWS_PROFILE != "default":
+            cmd.extend(['--profile', AWS_PROFILE])
+            
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             return True, f"AWS IoT endpoint: {result.stdout.strip()}"
         return False, result.stderr.strip()
@@ -59,27 +58,20 @@ def check_aws_connectivity():
 
 def check_mqtt_connectivity():
     """Test AWS IoT MQTT connectivity by publishing to a test topic"""
-    payload_dict = {"test": "AWS MQTT Connectivity Check"}
+    payload = json.dumps({"test": "AWS MQTT Connectivity Check"})
     
-    # Convert to JSON (DO NOT ENCODE BASE64)
-    payload_json = json.dumps(payload_dict)
-
     try:
-        # Use a temporary file to avoid AWS CLI escaping issues
-        with tempfile.NamedTemporaryFile("w", delete=False) as temp_file:
-            temp_file.write(payload_json)  # Write raw JSON (No base64)
-            temp_file.flush()
-
-            # Publish using the temporary file
-            result = subprocess.run(
-                ['aws', 'iot-data', 'publish', 
-                 '--topic', TEST_TOPIC, 
-                 '--payload', f'file://{temp_file.name}', 
-                 '--region', AWS_REGION],
-                capture_output=True,
-                text=True
-            )
-
+        cmd = [
+            'aws', 'iot-data', 'publish',
+            '--topic', TEST_TOPIC,
+            '--cli-binary-format', 'raw-in-base64-out',
+            '--payload', payload,
+            '--region', AWS_REGION
+        ]
+        if AWS_PROFILE != "default":
+            cmd.extend(['--profile', AWS_PROFILE])
+            
+        result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode == 0:
             return True, f"Successfully published to topic {TEST_TOPIC}"
         return False, result.stderr.strip()
