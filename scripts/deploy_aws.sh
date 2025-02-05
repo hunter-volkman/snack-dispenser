@@ -3,6 +3,9 @@ set -e
 
 echo "Deploying Edge Snack Dispenser component to AWS Greengrass..."
 
+# Disable the AWS CLI pager
+export AWS_PAGER=""
+
 THING_NAME="EdgeSnackDispenserCoreThing"
 REGION="us-east-1"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
@@ -16,7 +19,7 @@ echo "Uploading artifact to S3 bucket ${S3_BUCKET}..."
 aws s3 mb s3://${S3_BUCKET} || true
 aws s3 cp ${ARTIFACT_ZIP} s3://${S3_BUCKET}/
 
-RECIPE_FILE="docs/edge-snack-dispenser.core-1.0.0.yaml"
+RECIPE_FILE="recipes/edge-snack-dispenser.core-1.0.0.yaml"
 echo "Creating component version using recipe file ${RECIPE_FILE}..."
 aws greengrassv2 create-component-version --inline-recipe fileb://${RECIPE_FILE}
 
