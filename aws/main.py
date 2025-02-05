@@ -7,7 +7,8 @@ import sys
 import os
 
 import awsiot.greengrasscoreipc
-from awsiot.greengrasscoreipc.model import PublishToIoTCore, QOS
+from awsiot.greengrasscoreipc.model import PublishMessage, QOS
+
 
 # Add the common directory to sys.path so we can import shared modules
 base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "common")
@@ -38,14 +39,14 @@ def publish_state(ipc_client, state, confidence):
         "confidence": confidence
     }
     try:
-        request = PublishToIoTCore(
-            topic="edgesnackdispenser/bowlstate",  # Updated topic name
+        request = PublishMessage(
+            topic="edgesnackdispenser/bowlstate",
             qos=QOS.AT_LEAST_ONCE,
             payload=json.dumps(message).encode()
         )
         operation = ipc_client.new_publish_to_iot_core()
         operation.activate(request)
-        operation.get_response().result(10)  # Wait up to 10 seconds
+        operation.get_response().result(10)
         logger.info("Published state to IoT Core")
     except Exception as e:
         logger.error(f"Failed to publish state: {e}")
