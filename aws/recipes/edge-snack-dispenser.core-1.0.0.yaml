@@ -3,7 +3,7 @@ RecipeFormatVersion: 2020-01-25
 ComponentName: com.edgesnackdispenser.core
 ComponentVersion: 1.0.0
 ComponentDescription: "Edge Snack Dispenser AWS Greengrass component"
-ComponentPublisher: yourname
+ComponentPublisher: huntervolkman
 ComponentConfiguration:
   DefaultConfiguration:
     checkInterval: 5
