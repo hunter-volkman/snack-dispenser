@@ -1,0 +1,38 @@
+---
+RecipeFormatVersion: 2020-01-25
+ComponentName: com.edgesnackdispenser.core
+ComponentVersion: 1.0.0
+ComponentDescription: "Edge Snack Dispenser AWS Greengrass component"
+ComponentPublisher: yourname
+ComponentConfiguration:
+  DefaultConfiguration:
+    checkInterval: 5
+    confidenceThreshold: 0.7
+    accessControl:
+      aws.greengrass.ipc.mqttproxy:
+        com.edgesnackdispenser.core:mqttproxy:1:
+          policyDescription: "Allows access to publish and subscribe"
+          operations: 
+            - aws.greengrass#PublishToIoTCore
+            - aws.greengrass#SubscribeToIoTCore
+          resources: 
+            - "edgesnackdispenser/bowlstate"
+            - "edgesnackdispenser/command"
+Manifests:
+  - Platform:
+      os: linux
+    Artifacts:
+      - URI: s3://edge-snack-dispenser-artifacts/edge-snack-dispenser.zip
+        Unarchive: ZIP
+    Lifecycle:
+      Install:
+        RequiresPrivilege: true
+        Script: |
+          pip3 install --user -r {artifacts:decompressedPath}/requirements.txt
+          pip3 install --user awsiotsdk opencv-python-headless numpy pyyaml scikit-learn RPi.GPIO
+      Run:
+        RequiresPrivilege: true
+        Script: |
+          export PYTHONPATH={artifacts:decompressedPath}
+          cd {artifacts:decompressedPath}
+          python3 aws/main.py
