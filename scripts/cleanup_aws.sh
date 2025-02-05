@@ -149,8 +149,23 @@ else
     echo "No Greengrass components found for $COMPONENT_NAME."
 fi
 
+
 # -------------------------------------------
-# Step 6: Clean up Local Greengrass Directories
+# Step 6: Clean up Greengrass Core Device
+# -------------------------------------------
+echo "Checking for Greengrass core devices..."
+CORE_DEVICE_EXISTS=$(aws greengrassv2 list-core-devices --query "coreDevices[?coreDeviceThingName=='$THING_NAME'].coreDeviceThingName" --output text)
+
+if [[ -n "$CORE_DEVICE_EXISTS" ]]; then
+    echo "Deleting Greengrass Core Device: $THING_NAME..."
+    aws greengrassv2 delete-core-device --core-device-thing-name "$THING_NAME"
+else
+    echo "Greengrass Core Device $THING_NAME not found, skipping..."
+fi
+
+
+# -------------------------------------------
+# Step 7: Clean up Local Greengrass Directories
 # -------------------------------------------
 if [[ -d "/greengrass" ]]; then
     echo "Cleaning up local Greengrass directories..."
