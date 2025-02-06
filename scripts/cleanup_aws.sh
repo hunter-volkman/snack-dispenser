@@ -1,175 +1,161 @@
 #!/bin/bash
-
-# ====================================================================
-# reset_aws.sh
-#
-# WARNING: This script deletes AWS IoT and Greengrass resources created
-# for the Edge Snack Dispenser demo. Use only in your test environment.
-# ====================================================================
+# cleanup_aws.sh - Removes all AWS resources for Edge Snack Dispenser
 
 # Don't exit on error - continue cleanup even if some resources don't exist
 set +e
 
-# AWS resource names
-THING_NAME="EdgeSnackDispenserCoreThing"
-THING_GROUP="EdgeSnackDispenserCoreThingGroup"
-ROLE_NAME="GreengrassV2TokenExchangeRole"
-POLICY_NAME="GreengrassV2IoTThingPolicy"
-COMPONENT_NAME="com.edgesnackdispenser.core"
+# Colors for output
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+NC='\033[0m'
+INFO="${GREEN}[INFO]${NC}"
+WARN="${YELLOW}[WARN]${NC}"
+ERROR="${RED}[ERROR]${NC}"
+
+# Configuration - must match setup_aws.sh exactly
+THING_NAME="EdgeSnackDispenserCore"
+THING_GROUP="EdgeSnackDispenserGroup"
 REGION="us-east-1"
+S3_BUCKET="edge-snack-dispenser-artifacts"
+ROLE_NAME="EdgeSnackDispenserRole"
+COMPONENT_NAME="com.edgesnackdispenser.core"
 
-echo "Resetting AWS IoT and Greengrass resources for Edge Snack Dispenser..."
-echo "NOTE: Please manually delete any active Greengrass deployments if needed."
+echo -e "${INFO} Cleaning up Edge Snack Dispenser resources..."
 
-# Function to check if an IoT Thing exists
-thing_exists() {
-    aws iot describe-thing --thing-name "$1" > /dev/null 2>&1
-    return $?
-}
+# Get AWS account ID
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
-# Function to check if an IoT Policy exists
-policy_exists() {
-    aws iot get-policy --policy-name "$1" > /dev/null 2>&1
-    return $?
-}
+# Stop Greengrass service first
+echo -e "${INFO} Stopping Greengrass service..."
+systemctl stop greengrass || true
 
-# Function to check if an IAM Role exists
-role_exists() {
-    aws iam get-role --role-name "$1" > /dev/null 2>&1
-    return $?
-}
+# Cancel any active deployments
+echo -e "${INFO} Canceling active deployments..."
+DEPLOYMENTS=$(aws greengrassv2 list-deployments \
+    --target-arn "arn:aws:iot:${REGION}:${AWS_ACCOUNT_ID}:thing/${THING_NAME}" \
+    --query 'deployments[*].deploymentId' --output text || echo "")
+for DEPLOYMENT_ID in $DEPLOYMENTS; do
+    echo -e "${INFO} Canceling deployment: $DEPLOYMENT_ID"
+    aws greengrassv2 cancel-deployment --deployment-id "$DEPLOYMENT_ID" || true
+done
 
-# -------------------------------------------
-# Step 1: Clean up IoT Certificates
-# -------------------------------------------
-if thing_exists "$THING_NAME"; then
-    echo "Found IoT Thing: $THING_NAME. Cleaning up..."
-
-    # Get attached certificates
-    PRINCIPALS=$(aws iot list-thing-principals --thing-name "$THING_NAME" --query 'principals' --output text)
-
-    if [[ -n "$PRINCIPALS" ]]; then
-        for CERT_ARN in $PRINCIPALS; do
-            echo "Processing certificate: $CERT_ARN"
-
-            # Detach IoT Policy if it exists
-            if policy_exists "$POLICY_NAME"; then
-                echo "Detaching IoT policy from certificate..."
-                aws iot detach-policy --policy-name "$POLICY_NAME" --target "$CERT_ARN"
-            fi
-
-            # Detach certificate from IoT Thing
-            echo "Detaching certificate from Thing..."
-            aws iot detach-thing-principal --thing-name "$THING_NAME" --principal "$CERT_ARN"
-
-            # Extract Certificate ID
-            CERT_ID=$(basename "$CERT_ARN")
-
-            # Deactivate and delete certificate
-            echo "Deactivating certificate..."
-            aws iot update-certificate --certificate-id "$CERT_ID" --new-status INACTIVE
-            
-            echo "Deleting certificate..."
-            aws iot delete-certificate --certificate-id "$CERT_ID" --force
-        done
-    else
-        echo "No certificates found for IoT Thing: $THING_NAME."
-    fi
-
-    # Delete IoT Thing
-    echo "Deleting IoT Thing..."
-    aws iot delete-thing --thing-name "$THING_NAME"
-else
-    echo "IoT Thing $THING_NAME not found, skipping..."
+# Clean up S3 bucket first (to prevent dependency issues)
+echo -e "${INFO} Cleaning up S3 bucket..."
+if aws s3api head-bucket --bucket "$S3_BUCKET" 2>/dev/null; then
+    echo -e "${INFO} Emptying S3 bucket..."
+    aws s3 rm "s3://${S3_BUCKET}" --recursive || true
+    echo -e "${INFO} Deleting S3 bucket..."
+    aws s3api delete-bucket --bucket "$S3_BUCKET" || true
 fi
 
-# -------------------------------------------
-# Step 2: Delete IoT Policy
-# -------------------------------------------
-if policy_exists "$POLICY_NAME"; then
-    echo "Deleting IoT policy..."
-    aws iot delete-policy --policy-name "$POLICY_NAME"
-else
-    echo "IoT Policy $POLICY_NAME not found, skipping..."
-fi
+# Clean up Greengrass components
+echo -e "${INFO} Cleaning up Greengrass components..."
+COMPONENT_ARN="arn:aws:greengrass:${REGION}:${AWS_ACCOUNT_ID}:components:${COMPONENT_NAME}"
+VERSIONS=$(aws greengrassv2 list-component-versions --arn "$COMPONENT_ARN" --query 'componentVersions[*].componentVersion' --output text || echo "")
 
-# -------------------------------------------
-# Step 3: Delete IoT Thing Group
-# -------------------------------------------
-if aws iot describe-thing-group --thing-group-name "$THING_GROUP" > /dev/null 2>&1; then
-    echo "Deleting IoT Thing Group..."
-    aws iot delete-thing-group --thing-group-name "$THING_GROUP"
-else
-    echo "Thing Group $THING_GROUP not found, skipping..."
-fi
+for VERSION in $VERSIONS; do
+    echo -e "${INFO} Deleting component version: $VERSION"
+    aws greengrassv2 delete-component --arn "${COMPONENT_ARN}:versions:${VERSION}" || true
+done
 
-# -------------------------------------------
-# Step 4: Clean up IAM Role
-# -------------------------------------------
-if role_exists "$ROLE_NAME"; then
-    echo "Found IAM Role: $ROLE_NAME. Cleaning up..."
+# Clean up IoT certificates and policies
+echo -e "${INFO} Processing IoT certificates and policies..."
+CERT_ARNS=$(aws iot list-thing-principals --thing-name "$THING_NAME" --query 'principals[]' --output text || echo "")
 
-    # Detach managed policies
-    ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[].PolicyArn' --output text)
-    if [[ -n "$ATTACHED_POLICIES" ]]; then
-        for POLICY_ARN in $ATTACHED_POLICIES; do
-            echo "Detaching policy $POLICY_ARN..."
-            aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn "$POLICY_ARN"
-        done
-    fi
-
-    # Delete inline policies
-    INLINE_POLICIES=$(aws iam list-role-policies --role-name "$ROLE_NAME" --query 'PolicyNames[]' --output text)
-    if [[ -n "$INLINE_POLICIES" ]]; then
-        for POLICY in $INLINE_POLICIES; do
-            echo "Deleting inline policy $POLICY..."
-            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$POLICY"
-        done
-    fi
-
-    # Delete IAM Role
-    echo "Deleting IAM role..."
-    aws iam delete-role --role-name "$ROLE_NAME"
-else
-    echo "IAM Role $ROLE_NAME not found, skipping..."
-fi
-
-# -------------------------------------------
-# Step 5: Clean up Greengrass Component
-# -------------------------------------------
-echo "Checking for Greengrass components..."
-COMPONENT_VERSIONS=$(aws greengrassv2 list-component-versions --arn "arn:aws:greengrass:$REGION:$(aws sts get-caller-identity --query Account --output text):components:$COMPONENT_NAME" --query 'componentVersions[].arn' --output text)
-
-if [[ -n "$COMPONENT_VERSIONS" ]]; then
-    for COMPONENT_ARN in $COMPONENT_VERSIONS; do
-        echo "Deleting Greengrass component: $COMPONENT_ARN"
-        aws greengrassv2 delete-component --arn "$COMPONENT_ARN"
+for CERT_ARN in $CERT_ARNS; do
+    echo -e "${INFO} Processing certificate: $CERT_ARN"
+    CERT_ID=$(echo "$CERT_ARN" | awk -F/ '{print $NF}')
+    
+    # List and detach all policies from certificate
+    ATTACHED_POLICIES=$(aws iot list-principal-policies --principal "$CERT_ARN" --query 'policies[*].policyName' --output text || echo "")
+    for POLICY_NAME in $ATTACHED_POLICIES; do
+        echo -e "${INFO} Detaching policy $POLICY_NAME from certificate"
+        aws iot detach-policy --policy-name "$POLICY_NAME" --target "$CERT_ARN" || true
     done
-else
-    echo "No Greengrass components found for $COMPONENT_NAME."
-fi
+    
+    # Detach from thing
+    aws iot detach-thing-principal --thing-name "$THING_NAME" --principal "$CERT_ARN" || true
+    
+    # Deactivate and delete certificate
+    aws iot update-certificate --certificate-id "$CERT_ID" --new-status INACTIVE || true
+    aws iot delete-certificate --certificate-id "$CERT_ID" --force || true
+done
 
+# Clean up IoT policies (both our policy and Greengrass-created policy)
+echo -e "${INFO} Cleaning up IoT policies..."
+for POLICY_NAME in "${THING_NAME}Policy" "GreengrassV2IoTThingPolicy"; do
+    # Get all targets for the policy
+    TARGETS=$(aws iot list-targets-for-policy --policy-name "$POLICY_NAME" --query 'targets[]' --output text || echo "")
+    
+    # Detach policy from all targets
+    for TARGET in $TARGETS; do
+        echo -e "${INFO} Detaching policy $POLICY_NAME from $TARGET"
+        aws iot detach-policy --policy-name "$POLICY_NAME" --target "$TARGET" || true
+    done
+    
+    # Delete the policy
+    echo -e "${INFO} Deleting policy $POLICY_NAME"
+    aws iot delete-policy --policy-name "$POLICY_NAME" || true
+done
 
-# -------------------------------------------
-# Step 6: Clean up Greengrass Core Device
-# -------------------------------------------
-echo "Checking for Greengrass core devices..."
-CORE_DEVICE_EXISTS=$(aws greengrassv2 list-core-devices --query "coreDevices[?coreDeviceThingName=='$THING_NAME'].coreDeviceThingName" --output text)
+# Delete Thing and Thing Group
+echo -e "${INFO} Deleting IoT Thing and Thing Group..."
+aws iot delete-thing --thing-name "$THING_NAME" || true
+aws iot delete-thing-group --thing-group-name "$THING_GROUP" || true
 
-if [[ -n "$CORE_DEVICE_EXISTS" ]]; then
-    echo "Deleting Greengrass Core Device: $THING_NAME..."
-    aws greengrassv2 delete-core-device --core-device-thing-name "$THING_NAME"
-else
-    echo "Greengrass Core Device $THING_NAME not found, skipping..."
-fi
+# Clean up role alias before IAM role
+echo -e "${INFO} Cleaning up role alias..."
+aws iot delete-role-alias --role-alias "GreengrassV2TokenExchangeRoleAlias" || true
 
+# Clean up IAM role
+echo -e "${INFO} Cleaning up IAM role..."
+# First remove all inline policies
+ROLE_POLICIES=$(aws iam list-role-policies --role-name "$ROLE_NAME" --query 'PolicyNames[]' --output text || echo "")
+for POLICY in $ROLE_POLICIES; do
+    echo -e "${INFO} Removing inline policy: $POLICY"
+    aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$POLICY" || true
+done
 
-# -------------------------------------------
-# Step 7: Clean up Local Greengrass Directories
-# -------------------------------------------
-if [[ -d "/greengrass" ]]; then
-    echo "Cleaning up local Greengrass directories..."
-    sudo rm -rf /greengrass
-fi
+# Then detach all managed policies
+ATTACHED_POLICIES=$(aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[*].PolicyArn' --output text || echo "")
+for POLICY_ARN in $ATTACHED_POLICIES; do
+    echo -e "${INFO} Detaching managed policy: $POLICY_ARN"
+    aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn "$POLICY_ARN" || true
+done
 
-echo "✅ Reset complete! All Edge Snack Dispenser resources have been cleaned up."
+# Make sure Greengrass managed policy is detached
+echo -e "${INFO} Detaching Greengrass managed policy..."
+aws iam detach-role-policy \
+    --role-name "$ROLE_NAME" \
+    --policy-arn "arn:aws:iam::aws:policy/service-role/GreengrassV2TokenExchangeRoleAccess" || true
+
+# Delete the role
+aws iam delete-role --role-name "$ROLE_NAME" || true
+
+# Clean up Greengrass Core device registration
+echo -e "${INFO} Cleaning up Greengrass Core device..."
+aws greengrassv2 delete-core-device --core-device-thing-name "$THING_NAME" || true
+
+# Clean up local Greengrass installation
+echo -e "${INFO} Cleaning up local Greengrass installation..."
+systemctl disable greengrass || true
+rm -f /etc/systemd/system/greengrass.service
+systemctl daemon-reload
+
+# Remove Greengrass directories
+rm -rf /greengrass
+rm -rf GreengrassInstaller
+rm -f greengrass-nucleus.zip
+
+# Remove Greengrass user and group
+echo -e "${INFO} Removing Greengrass user and group..."
+userdel ggc_user || true
+groupdel ggc_group || true
+
+# Clean up local certificates
+rm -f device.pem.crt private.pem.key public.pem.key root.ca.pem
+
+echo -e "\n${GREEN}✅ Cleanup complete!${NC}"
+echo -e "${INFO} All Edge Snack Dispenser resources have been removed."
+echo "You can now run setup_aws.sh for a fresh installation."
