@@ -1,0 +1,10 @@
+{
+    "thingName": "SnackDispenserCore",
+    "thingGroup": "SnackDispenserGroup",
+    "region": "us-east-1",
+    "tokenExchangeRole": "GreengrassV2TokenExchangeRole",
+    "tokenExchangeAlias": "GreengrassV2TokenExchangeAlias",
+    "certsDir": "certificates",
+    "accountId": "796989266900",
+    "s3Bucket": "edge-snack-dispenser-demo-artifacts"
+}
