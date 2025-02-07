@@ -16,7 +16,7 @@ ERROR="${RED}[ERROR]${NC}"
 
 # Configuration
 CONFIG_FILE="greengrass-config.json"
-COMPONENT_VERSION="1.0.1"
+COMPONENT_VERSION="1.0.0"
 S3_BUCKET="edge-snack-dispenser-demo-artifacts"
 COMPONENTS_DIR="components"
 
@@ -203,7 +203,7 @@ create_deployment() {
                 "componentVersion": "2.0.3"
             },
             "com.example.mqtt.test": {
-                "componentVersion": "1.0.1"
+                "componentVersion": "1.0.0"
             }
         }' \
         --region "$REGION"
