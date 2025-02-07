@@ -1,1 +1,0 @@
-https://docs.aws.amazon.com/greengrass/v2/developerguide/setting-up.html
