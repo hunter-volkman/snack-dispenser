@@ -6,14 +6,18 @@
 set -e
 set -o pipefail
 
+# Source the centralized project configuration
+# Make sure aws-config.sh is in the same directory
+source ./aws-config.sh
+
 # Configuration
+# Additional configuration (not part of aws-config.sh)
 THING_NAME="SnackDispenserCore"
 THING_GROUP="SnackDispenserGroup"
 REGION="us-east-1"
 IOT_POLICY_NAME="SnackDispenserIoTPolicy"
 TOKEN_EXCHANGE_ROLE_NAME="GreengrassV2TokenExchangeRole"
 TOKEN_EXCHANGE_ALIAS="GreengrassV2TokenExchangeAlias"
-S3_BUCKET="edge-snack-dispenser-demo-artifacts"
 CERTS_DIR="certificates"
 
 # Color output
@@ -312,11 +316,11 @@ main() {
     
     echo -e "\n${GREEN}✅ AWS setup completed successfully!${NC}"
     echo -e "${INFO} Next steps:"
-    echo "1. Run greengrass-install.sh to install Greengrass core"
-    echo "2. Use component-deploy.sh to deploy your components"
+    echo "1. Run sudo -E ./greengrass-install.sh to install Greengrass core"
+    echo "2. Use sudo -E ./greengrass-deploy.sh to deploy component"
     echo ""
     echo "Important files:"
-    echo "- ${CERTS_DIR}/        : Contains all certificates"
+    echo "- ${CERTS_DIR}/         : Contains all certificates"
     echo "- greengrass-config.json: Configuration for other scripts"
 }
 

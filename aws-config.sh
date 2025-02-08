@@ -1,0 +1,5 @@
+PROJECT_NAME="snackdispenser"
+COMPONENT_CATEGORY="detector"
+COMPONENT_NAME="bowlstate"
+FULL_COMPONENT_NAME="com.${PROJECT_NAME}.${COMPONENT_CATEGORY}.${COMPONENT_NAME}"
+S3_BUCKET="snack-dispenser-artifacts"
