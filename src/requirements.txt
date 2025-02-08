@@ -1,0 +1,7 @@
+opencv-python==4.6.0.66
+numpy>=1.22.0
+joblib>=1.2.0
+RPi.GPIO>=0.7.0
+PyYAML>=6.0.0
+awsiotsdk>=1.0.0
+scikit-learn>=1.0.2

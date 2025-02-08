@@ -1,0 +1,5 @@
+hardware:
+  motor:
+    step_pin: 16
+    dir_pin: 15
+    en_pin: 18
