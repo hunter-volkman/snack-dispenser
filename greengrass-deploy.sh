@@ -1,9 +1,18 @@
 #!/bin/bash
-# greengrass-deploy-vision.sh
-# Deploys the combined BowlStateDetector and HopperController component
+# greengrass-deploy.sh
+# Deploys the BowlStateDetector component which uses detector to detect bowl state (empty/full)
+# and publishes the result via MQTT with the functionality to activate the motor.
 
 set -e
 set -o pipefail
+
+# Source the centralized project configuration.
+# Make sure aws-config.sh is in the same directory.
+source ./aws-config.sh
+
+# Other configuration values
+COMPONENT_VERSION="1.0.0"
+COMPONENTS_DIR="components"
 
 # Color output
 RED='\033[0;31m'
@@ -14,20 +23,16 @@ INFO="${GREEN}[INFO]${NC}"
 WARN="${YELLOW}[WARN]${NC}"
 ERROR="${RED}[ERROR]${NC}"
 
-# Configuration
+# Configuration file for Greengrass setup (created by aws-setup.sh)
 CONFIG_FILE="greengrass-config.json"
-COMPONENT_VERSION="1.0.0"
-S3_BUCKET="edge-snack-dispenser-demo-artifacts"
-COMPONENTS_DIR="components"
 
-# Load configuration
+# Load configuration from the JSON file
 if [ ! -f "$CONFIG_FILE" ]; then
     echo -e "${ERROR} Configuration file $CONFIG_FILE not found!"
     echo "Please run aws-setup.sh first"
     exit 1
 fi
 
-# Load config values from JSON
 THING_NAME=$(jq -r '.thingName' "$CONFIG_FILE")
 REGION=$(jq -r '.region' "$CONFIG_FILE")
 AWS_ACCOUNT_ID=$(jq -r '.accountId' "$CONFIG_FILE")
@@ -38,32 +43,30 @@ cleanup_failed_deployments() {
     sudo rm -rf /greengrass/v2/deployments/*
 }
 
-# Verify and create required files
+# Verify (and if needed, create) the Python source file for the detector component
 verify_sources() {
-    echo -e "${INFO} Verifying source files..."
-    
-    # Create directories
-    mkdir -p src/vision
-    mkdir -p src/config
-    
-    # Create config.yaml for motor settings
-    if [ ! -f "src/config/config.yaml" ]; then
-        echo -e "${INFO} Creating motor configuration file..."
-        cat > src/config/config.yaml << 'EOF'
-hardware:
-  motor:
-    step_pin: 16
-    dir_pin: 15
-    en_pin: 18
-EOF
-    fi
-
-    # Create main Python script
-    if [ ! -f "src/vision/bowl_state_detector.py" ]; then
-        echo -e "${WARN} Main component source not found. Creating it..."
-        cat > src/vision/bowl_state_detector.py << 'EOF'
+    echo -e "${INFO} Verifying source files for BowlStateDetector..."
+    if [ ! -f "src/detector/bowl_state_detector.py" ]; then
+        echo -e "${WARN} BowlStateDetector source not found. Creating it..."
+        mkdir -p src/detector
+        cat > src/detector/bowl_state_detector.py << 'EOF'
 #!/usr/bin/env python3
-# Combined BowlState and Hopper Controller
+"""
+Combined Bowl State Detector and Motor (Hopper) Controller
+
+This component uses a camera to detect the bowl state (empty/full)
+using a pre-trained model, publishes the result via MQTT to AWS IoT Core,
+and automatically actuates a stepper motor to dispense portions when the
+bowl is detected as empty.
+
+It also subscribes to the "bowl/command" topic. When it receives an ad-hoc
+command message such as {"empty": true}, it will trigger the motor.
+
+For development purposes, DEBUG_MODE forces motor activation regardless of
+the model’s prediction and DEBUG_SAVE_IMAGES saves each captured image with
+debug metadata.
+"""
+
 import cv2
 import numpy as np
 import joblib
@@ -72,15 +75,24 @@ import json
 import os
 import sys
 import traceback
-import RPi.GPIO as GPIO
-import yaml
 import logging
+import yaml
+import RPi.GPIO as GPIO
+import csv
+from datetime import datetime
+
 import awsiot.greengrasscoreipc
 import awsiot.greengrasscoreipc.client as client
 from awsiot.greengrasscoreipc.model import (
     PublishToIoTCoreRequest,
-    QOS
+    QOS,
+    SubscribeToTopicRequest
 )
+
+# ----------------- Development Flags -----------------
+DEBUG_MODE = True          # When True, force motor activation for debugging.
+DEBUG_SAVE_IMAGES = True   # When True, save captured images and metadata for inspection.
+# -------------------------------------------------------
 
 # Set up logging
 logging.basicConfig(
@@ -89,7 +101,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BowlStateAndHopper")
 
-# Vision configuration
+# Detector configuration
 IMAGE_SIZE = (224, 224)
 CONFIDENCE_THRESHOLD = 0.7
 CAMERA_ID = 0
@@ -108,16 +120,17 @@ class BowlStateAndHopperController:
         logger.info("Initialization complete")
 
     def setup_motor(self):
-        """Initialize motor configuration and GPIO setup"""
+        """Initialize motor configuration and GPIO setup."""
         self.load_motor_config()
         logger.info("Setting up GPIO pins...")
         GPIO.setmode(GPIO.BOARD)
         GPIO.setup([self.step_pin, self.dir_pin, self.en_pin], GPIO.OUT)
+        # Disable the motor by default (assuming HIGH disables it)
         GPIO.output(self.en_pin, GPIO.HIGH)
         logger.info("GPIO setup complete")
 
     def load_motor_config(self):
-        """Load motor configuration from YAML file"""
+        """Load motor configuration from YAML file."""
         try:
             config_path = os.path.join(
                 os.path.dirname(os.path.abspath(__file__)),
@@ -131,11 +144,11 @@ class BowlStateAndHopperController:
                 self.en_pin = motor_config.get("en_pin", 18)
                 logger.info(f"Motor configuration loaded: {motor_config}")
         except Exception as e:
-            logger.warning(f"Error loading motor config: {e}. Using defaults")
+            logger.warning(f"Error loading motor config: {e}. Using default pins")
             self.step_pin, self.dir_pin, self.en_pin = 16, 15, 18
 
     def load_model(self):
-        """Load the pre-trained bowl state model"""
+        """Load the pre-trained bowl state model."""
         base_dir = os.path.dirname(os.path.abspath(__file__))
         model_path = os.path.join(base_dir, "bowl_state_model.joblib")
         try:
@@ -144,33 +157,34 @@ class BowlStateAndHopperController:
             return model
         except Exception as e:
             logger.error(f"Failed to load model: {e}")
-            raise
+            logger.error(traceback.format_exc())
+            sys.exit(1)
 
     def setup_camera(self):
-        """Initialize the camera"""
+        """Initialize the camera."""
         cap = cv2.VideoCapture(CAMERA_ID)
         if not cap.isOpened():
             raise RuntimeError("Failed to open camera")
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
-        for _ in range(3):  # Flush frames
+        for _ in range(3):  # Flush a few frames
             cap.grab()
         logger.info(f"Camera opened with resolution {CAMERA_WIDTH}x{CAMERA_HEIGHT}")
         return cap
 
     def enable_motor(self):
-        """Enable the stepper motor"""
+        """Enable the stepper motor (active low)."""
         logger.info("Enabling motor")
         GPIO.output(self.en_pin, GPIO.LOW)
         time.sleep(0.05)
 
     def disable_motor(self):
-        """Disable the stepper motor"""
+        """Disable the stepper motor."""
         logger.info("Disabling motor")
         GPIO.output(self.en_pin, GPIO.HIGH)
 
     def step(self, steps, rpm=30, steps_per_rev=200):
-        """Move the motor a specified number of steps"""
+        """Move the motor a specified number of steps."""
         logger.info(f"Stepping motor: {steps} steps at {rpm} RPM")
         delay = 60.0 / (rpm * steps_per_rev)
         for i in range(steps):
@@ -180,75 +194,140 @@ class BowlStateAndHopperController:
             time.sleep(delay)
 
     def dispense(self, portions=1):
-        """Dispense a specified number of portions"""
+        """Dispense a specified number of portions by stepping the motor."""
         logger.info(f"Starting dispensing for {portions} portion(s)")
         try:
             self.enable_motor()
-            steps_per_portion = 200
-            for i in range(1, portions+1):
+            steps_per_portion = 200  # Adjust as necessary for your mechanism
+            for i in range(1, portions + 1):
                 logger.info(f"Dispensing portion {i}/{portions}")
                 self.step(steps_per_portion)
                 time.sleep(0.5)
             logger.info("Dispensing complete")
         except Exception as e:
             logger.error(f"Error during dispensing: {e}")
+            logger.error(traceback.format_exc())
         finally:
             self.disable_motor()
 
     def preprocess_frame(self, frame):
-        """Prepare a frame for model inference"""
+        """Prepare a captured frame for model inference."""
         resized = cv2.resize(frame, IMAGE_SIZE)
         rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
         flattened = rgb.flatten().reshape(1, -1)
         return flattened
 
+    def save_debug_image(self, frame, timestamp, prediction, is_empty, confidence):
+        """Save the captured image and append metadata for debugging."""
+        # Create a debug_images folder relative to this file
+        debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_images")
+        if not os.path.exists(debug_dir):
+            os.makedirs(debug_dir)
+        
+        # Create a filename based on the current timestamp
+        dt_str = datetime.fromtimestamp(timestamp).strftime("%Y%m%d-%H%M%S")
+        filename = f"capture_{dt_str}.jpg"
+        file_path = os.path.join(debug_dir, filename)
+        
+        # Save the image
+        cv2.imwrite(file_path, frame)
+        
+        # Append metadata to a CSV file
+        metadata_file = os.path.join(debug_dir, "metadata.csv")
+        header = ["timestamp", "filename", "frame_shape", "prediction", "is_empty", "confidence"]
+        data_line = [
+            str(timestamp),
+            filename,
+            str(frame.shape),
+            str(prediction.tolist() if hasattr(prediction, "tolist") else prediction),
+            str(is_empty),
+            str(confidence)
+        ]
+        write_header = not os.path.exists(metadata_file) or os.stat(metadata_file).st_size == 0
+        try:
+            with open(metadata_file, "a", newline="") as csvfile:
+                writer = csv.writer(csvfile)
+                if write_header:
+                    writer.writerow(header)
+                writer.writerow(data_line)
+            logger.info(f"Saved debug image to {file_path} with metadata appended.")
+        except Exception as e:
+            logger.error(f"Failed to write debug metadata: {e}")
+
     def is_bowl_empty(self):
-        """Capture frame and determine if bowl is empty"""
+        """Capture a frame and determine if the bowl is empty."""
+        # Flush extra frames to get a more up-to-date image
+        for _ in range(5):
+            self.cap.grab()
+            ret, frame = self.cap.read()
         ret, frame = self.cap.read()
         if not ret:
             logger.error("Failed to capture frame")
             return False, 0.0
+
+        # Get current timestamp and log frame details
+        capture_time = time.time()
+        logger.info(f"Captured frame at {capture_time} with shape {frame.shape}")
+
         processed = self.preprocess_frame(frame)
-        prediction = self.model.predict_proba(processed)[0]
+        try:
+            prediction = self.model.predict_proba(processed)[0]
+        except Exception as e:
+            logger.error(f"Error during model inference: {e}")
+            return False, 0.0
+
+        # Standard decision based on the model's prediction
         is_empty = prediction[0] > CONFIDENCE_THRESHOLD
         confidence = float(max(prediction))
+
+        # If in debug mode, override the model’s decision so the motor always activates
+        if DEBUG_MODE:
+            logger.info("DEBUG_MODE enabled: Forcing bowl status to empty for testing")
+            is_empty = True
+
+        # Save the debug image and metadata if enabled.
+        if DEBUG_SAVE_IMAGES:
+            self.save_debug_image(frame, capture_time, prediction, is_empty, confidence)
+
+        logger.info(f"Model prediction: {prediction} => bowl is {'empty' if is_empty else 'full'} with confidence {confidence:.2f}")
         return is_empty, confidence
 
     def get_ipc_client(self):
-        """Create or get existing IPC client with retry logic"""
+        """Create or get an existing IPC client with retry logic."""
         MAX_RECONNECT_ATTEMPTS = 5
-        RETRY_INTERVAL = 2
-
+        RETRY_INTERVAL = 2  # seconds
         for attempt in range(MAX_RECONNECT_ATTEMPTS):
             try:
                 logger.info(f"Connecting to IPC (attempt {attempt + 1}/{MAX_RECONNECT_ATTEMPTS})...")
-                client = awsiot.greengrasscoreipc.connect()
+                ipc_client = awsiot.greengrasscoreipc.connect()
                 logger.info("Successfully connected to IPC")
-                return client
+                return ipc_client
             except Exception as e:
-                logger.error(f"Connection attempt {attempt + 1} failed: {str(e)}")
+                logger.error(f"IPC connection attempt {attempt + 1} failed: {str(e)}")
                 if attempt < MAX_RECONNECT_ATTEMPTS - 1:
                     time.sleep(RETRY_INTERVAL)
-
         raise ConnectionError("Failed to establish IPC connection after maximum retries")
 
     def publish_state(self, is_empty, confidence):
-        """Publish bowl state via MQTT with retry logic"""
+        """Publish bowl state via MQTT with retry logic."""
         MAX_PUBLISH_RETRIES = 3
-        
+
+        # Add an extra field to indicate whether the motor should be activated
+        motor_activation = bool(is_empty and confidence > CONFIDENCE_THRESHOLD)
         message = {
             "message": "Bowl State Update",
             "empty": bool(is_empty),
             "confidence": float(confidence),
-            "timestamp": time.time()
+            "timestamp": time.time(),
+            "activateMotor": motor_activation
         }
-        
+
         request = PublishToIoTCoreRequest(
             topic_name="bowl/state",
             qos=QOS.AT_LEAST_ONCE,
             payload=json.dumps(message).encode()
         )
-        
+
         for attempt in range(MAX_PUBLISH_RETRIES):
             try:
                 operation = self.ipc_client.new_publish_to_iot_core()
@@ -263,54 +342,77 @@ class BowlStateAndHopperController:
                     logger.error(traceback.format_exc())
                 if attempt < MAX_PUBLISH_RETRIES - 1:
                     time.sleep(1)
-        
         return False
 
+    def subscribe_for_commands(self):
+        """Subscribe to the 'bowl/command' topic to allow ad-hoc motor triggers."""
+        try:
+            subscribe_request = SubscribeToTopicRequest(
+                topic="bowl/command",
+                qos=QOS.AT_LEAST_ONCE
+            )
+
+            def on_command(message):
+                try:
+                    payload = message.payload.decode()
+                    command = json.loads(payload)
+                    logger.info(f"Received command: {command}")
+                    if command.get("empty") is True:
+                        logger.info("Ad-hoc command received. Triggering motor dispensing...")
+                        self.dispense()
+                except Exception as e:
+                    logger.error(f"Error processing command message: {e}")
+
+            subscribe_op = self.ipc_client.new_subscribe_to_topic()
+            subscribe_op.activate(subscribe_request, on_stream_event=on_command)
+            logger.info("Subscribed to 'bowl/command' topic for ad-hoc motor triggers.")
+        except Exception as e:
+            logger.error(f"Failed to subscribe for commands: {e}")
+
     def run(self):
-        """Main loop combining bowl state detection and automatic dispensing"""
+        """Main loop that combines bowl state detection, motor dispensing, and command subscription."""
         logger.info("Starting combined BowlState and Hopper controller...")
-        
         try:
             self.ipc_client = self.get_ipc_client()
-            
+            self.subscribe_for_commands()
+
             while True:
                 try:
-                    # Check if we need to reconnect IPC
                     if self.ipc_client is None:
                         self.ipc_client = self.get_ipc_client()
+                        self.subscribe_for_commands()
                     
-                    # Get bowl state
                     is_empty, conf = self.is_bowl_empty()
                     logger.info(f"Bowl is {'empty' if is_empty else 'full'} with confidence {conf:.2f}")
-                    
-                    # Publish state
+
+                    # Publish the state update.
                     if not self.publish_state(is_empty, conf):
                         self.consecutive_failures += 1
-                        logger.warning(f"Publishing failed {self.consecutive_failures} times in a row")
-                        
+                        logger.warning(f"Publishing failed {self.consecutive_failures} times consecutively")
                         if self.consecutive_failures >= self.MAX_CONSECUTIVE_FAILURES:
-                            logger.warning("Too many consecutive failures, recreating IPC client...")
+                            logger.warning("Too many consecutive publish failures; recreating IPC client...")
                             self.ipc_client = None
                             self.consecutive_failures = 0
                     else:
                         self.consecutive_failures = 0
-                    
-                    # Automatically dispense if bowl is empty
-                    if is_empty and conf > CONFIDENCE_THRESHOLD:
+
+                    # If in debug mode, force dispensing regardless of detection.
+                    if DEBUG_MODE:
+                        logger.info("DEBUG_MODE active: Forcing motor dispensing.")
+                        self.dispense()
+                    elif is_empty and conf > CONFIDENCE_THRESHOLD:
                         logger.info("Bowl detected as empty, initiating dispensing...")
                         self.dispense()
-                    
-                    time.sleep(10)
-                    
+
+                    time.sleep(10)  # Adjust the loop delay as needed.
                 except Exception as e:
                     logger.error(f"Error in main loop: {str(e)}")
                     logger.error(traceback.format_exc())
-                    time.sleep(10)  # Wait before retrying
-                    
+                    time.sleep(10)
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received. Exiting.")
         except Exception as e:
-            logger.error(f"Fatal error in main: {str(e)}")
+            logger.error(f"Fatal error: {str(e)}")
             logger.error(traceback.format_exc())
         finally:
             if self.cap:
@@ -324,37 +426,16 @@ if __name__ == "__main__":
     controller = BowlStateAndHopperController()
     controller.run()
 EOF
-        chmod +x src/vision/bowl_state_detector.py
-    fi
-
-    # Create requirements.txt
-    if [ ! -f "src/requirements.txt" ]; then
-        echo -e "${INFO} Creating requirements.txt..."
-        cat > src/requirements.txt << 'EOF'
-opencv-python
-numpy
-joblib
-RPi.GPIO
-PyYAML
-awsiotsdk
-EOF
+        chmod +x src/detector/bowl_state_detector.py
     fi
 
     # Warn if model file is missing
-    if [ ! -f "src/vision/bowl_state_model.joblib" ]; then
-        echo -e "${WARN} Model file src/vision/bowl_state_model.joblib not found. Please add your trained model file."
+    if [ ! -f "src/detector/bowl_state_model.joblib" ]; then
+        echo -e "${WARN} Model file src/detector/bowl_state_model.joblib not found. Please add your trained model file."
     fi
 }
 
-# Install system dependencies
-install_dependencies() {
-    echo -e "${INFO} Installing system dependencies..."
-    # Required for OpenCV and GPIO access
-    sudo apt-get update
-    sudo apt-get install -y python3-opencv python3-rpi.gpio python3-pip
-}
-
-# Create S3 bucket if needed
+# Create S3 bucket if needed (only defined once)
 create_s3_bucket() {
     echo -e "${INFO} Creating S3 bucket for components..."
     if ! aws s3 ls "s3://${S3_BUCKET}" >/dev/null 2>&1; then
@@ -365,99 +446,74 @@ create_s3_bucket() {
 }
 
 # Package component
-# Package component
 package_component() {
-    echo -e "${INFO} Packaging component..."
+    echo -e "${INFO} Packaging BowlStateDetector component..."
     
     # Clean and create directories
     rm -rf "$COMPONENTS_DIR"
-    mkdir -p "$COMPONENTS_DIR/vision"
-    mkdir -p "$COMPONENTS_DIR/config"
+    mkdir -p "$COMPONENTS_DIR/detector"
     mkdir -p "$COMPONENTS_DIR/recipes"
     
     # Copy files
-    cp src/vision/bowl_state_detector.py "$COMPONENTS_DIR/vision/"
-    cp src/config/config.yaml "$COMPONENTS_DIR/config/"
-    cp src/requirements.txt "$COMPONENTS_DIR/vision/"  # Copy requirements to vision directory
-    if [ -f "src/vision/bowl_state_model.joblib" ]; then
-        cp src/vision/bowl_state_model.joblib "$COMPONENTS_DIR/vision/"
+    cp src/detector/bowl_state_detector.py "$COMPONENTS_DIR/detector/"
+    if [ -f "src/detector/bowl_state_model.joblib" ]; then
+        cp src/detector/bowl_state_model.joblib "$COMPONENTS_DIR/detector/"
     fi
     
-    # Create component recipe
-    cat > "$COMPONENTS_DIR/recipes/com.example.vision.bowlstate.yaml" << EOF
+    # Create component recipe using the centralized FULL_COMPONENT_NAME
+    cat > "$COMPONENTS_DIR/recipes/${FULL_COMPONENT_NAME}.yaml" << EOF
 ---
 RecipeFormatVersion: 2020-01-25
-ComponentName: com.example.vision.bowlstate
+ComponentName: ${FULL_COMPONENT_NAME}
 ComponentVersion: ${COMPONENT_VERSION}
-ComponentDescription: "Component that detects bowl state and controls the hopper motor"
+ComponentDescription: "Component that detects if the bowl is empty or full using detector and publishes the state via MQTT."
 ComponentPublisher: Example
 ComponentConfiguration:
   DefaultConfiguration:
     accessControl:
       aws.greengrass.ipc.mqttproxy:
-        com.example.vision.bowlstate:mqtt:1:
+        ${FULL_COMPONENT_NAME}:mqtt:1:
           policyDescription: "Allows access to publish to bowl/state topic"
           operations:
             - aws.greengrass#PublishToIoTCore
           resources:
             - bowl/state
-      aws.greengrass.hardware.gpio:
-        com.example.vision.bowlstate:gpio:1:
-          policyDescription: "Allows access to GPIO"
-          operations:
-            - aws.greengrass.hardware.gpio.Read
-            - aws.greengrass.hardware.gpio.Write
-          resources:
-            - "*"
 ComponentDependencies:
   aws.greengrass.TokenExchangeService:
-    VersionRequirement: ^2.0.0
-  aws.greengrass.Nucleus:
     VersionRequirement: ^2.0.0
 Manifests:
   - Platform:
       os: linux
+    Artifacts:
+      - URI: s3://${S3_BUCKET}/detector/detector.zip
+        Unarchive: ZIP
     Lifecycle:
-      Install:
-        Script: |
-          apt-get update
-          apt-get install -y python3-opencv python3-rpi.gpio python3-pip
-          pip3 install -r {artifacts:decompressedPath}/vision/requirements.txt
       Run:
         RequiresPrivilege: true
-        Script: |
-          export PYTHONPATH={artifacts:decompressedPath}/vision
-          python3 {artifacts:decompressedPath}/vision/bowl_state_detector.py
-    Artifacts:
-      - URI: s3://${S3_BUCKET}/vision/vision.zip
-        Unarchive: ZIP
-      - URI: s3://${S3_BUCKET}/config/config.zip
-        Unarchive: ZIP
+        Script: python3 {artifacts:decompressedPath}/detector/bowl_state_detector.py
 EOF
     
-    # Create zip packages
-    (cd "$COMPONENTS_DIR/vision" && zip -r ../vision.zip .)
-    (cd "$COMPONENTS_DIR/config" && zip -r ../config.zip .)
+    # Create zip package
+    (cd "$COMPONENTS_DIR/detector" && zip -r ../detector.zip .)
 }
 
 # Upload component
 upload_component() {
-    echo -e "${INFO} Uploading component packages to S3..."
+    echo -e "${INFO} Uploading component package to S3..."
     if ! aws s3 ls "s3://${S3_BUCKET}" >/dev/null 2>&1; then
         echo -e "${ERROR} Cannot access S3 bucket. Please verify its existence and your permissions."
         exit 1
     fi
-    aws s3 cp "$COMPONENTS_DIR/vision.zip" "s3://${S3_BUCKET}/vision/"
-    aws s3 cp "$COMPONENTS_DIR/config.zip" "s3://${S3_BUCKET}/config/"
+    aws s3 cp "$COMPONENTS_DIR/detector.zip" "s3://${S3_BUCKET}/detector/"
     echo -e "${INFO} Upload completed."
 }
 
 # Create deployment
 create_deployment() {
-    echo -e "${INFO} Creating Greengrass deployment..."
+    echo -e "${INFO} Creating Greengrass deployment for BowlStateDetector..."
     
     aws greengrassv2 create-component-version \
-        --inline-recipe fileb://"$COMPONENTS_DIR/recipes/com.example.vision.bowlstate.yaml" \
+        --inline-recipe fileb://"$COMPONENTS_DIR/recipes/${FULL_COMPONENT_NAME}.yaml" \
         --region "$REGION"
     
     aws greengrassv2 create-deployment \
@@ -470,10 +526,7 @@ create_deployment() {
             "aws.greengrass.TokenExchangeService": {
                 "componentVersion": "2.0.3"
             },
-            "aws.greengrass.Nucleus": {
-                "componentVersion": "2.13.0"
-            },
-            "com.example.vision.bowlstate": {
+            "'"${FULL_COMPONENT_NAME}"'": {
                 "componentVersion": "'"${COMPONENT_VERSION}"'"
             }
         }' \
@@ -486,7 +539,7 @@ verify_deployment() {
     echo -e "${INFO} Waiting for deployment to complete (this may take a few minutes)..."
     
     for i in {1..24}; do
-        if aws greengrassv2 list-installed-components --core-device-thing-name "$THING_NAME" --region "$REGION" | grep -q "com.example.vision.bowlstate"; then
+        if aws greengrassv2 list-installed-components --core-device-thing-name "$THING_NAME" --region "$REGION" | grep -q "${FULL_COMPONENT_NAME}"; then
             echo -e "${INFO} Component successfully deployed!"
             return 0
         fi
@@ -501,20 +554,19 @@ verify_deployment() {
 
 # Main deployment process
 main() {
-    echo "🚀 Deploying combined BowlState and Hopper controller..."
+    echo "🚀 Deploying BowlStateDetector component..."
     cleanup_failed_deployments
     verify_sources
-    install_dependencies
     create_s3_bucket
     package_component
     upload_component
     create_deployment
     verify_deployment
     
-    echo -e "\n${GREEN}✅ Component deployment completed!${NC}"
+    echo -e "\n${GREEN}✅ BowlStateDetector component deployment completed!${NC}"
     echo -e "${INFO} Next steps:"
     echo "1. Check Greengrass logs: sudo tail -f /greengrass/v2/logs/greengrass.log"
-    echo "2. Check component logs: sudo tail -f /greengrass/v2/logs/com.example.vision.bowlstate.log"
+    echo "2. Check component logs: sudo tail -f /greengrass/v2/logs/${FULL_COMPONENT_NAME}.log"
     echo "3. Monitor MQTT messages in AWS IoT Core Test Client (topic: bowl/state)"
     echo "4. View component status: sudo /greengrass/v2/bin/greengrass-cli component list"
 }

@@ -189,7 +189,7 @@ main() {
     echo -e "${INFO} Next steps:"
     echo "1. Check Greengrass status: sudo systemctl status greengrass"
     echo "2. View logs: sudo tail -f /greengrass/v2/logs/greengrass.log"
-    echo "3. Deploy components using: sudo -E ./greengrass-deploy.sh"
+    echo "3. Deploy components using: sudo -E ./deploy-component.sh"
 }
 
 # Run main function

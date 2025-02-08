@@ -6,5 +6,5 @@
     "tokenExchangeAlias": "GreengrassV2TokenExchangeAlias",
     "certsDir": "certificates",
     "accountId": "796989266900",
-    "s3Bucket": "edge-snack-dispenser-demo-artifacts"
+    "s3Bucket": "snack-dispenser-artifacts"
 }

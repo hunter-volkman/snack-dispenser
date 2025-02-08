@@ -5,6 +5,18 @@
 set -e
 set -o pipefail
 
+# Source the centralized project configuration
+# Make sure aws-config.sh is in the same directory
+source ./aws-config.sh
+
+# Use the S3_BUCKET from aws-config.sh and define the test component name
+# This changes the component name from "com.example.mqtt.test" to "com.snackdispenser.mqtt.test"
+TEST_COMPONENT_NAME="com.${PROJECT_NAME}.mqtt.test"
+
+# Other configuration values
+COMPONENT_VERSION="1.0.0"
+COMPONENTS_DIR="components"
+
 # Color output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -14,11 +26,8 @@ INFO="${GREEN}[INFO]${NC}"
 WARN="${YELLOW}[WARN]${NC}"
 ERROR="${RED}[ERROR]${NC}"
 
-# Configuration
+# Configuration file for Greengrass setup (created by aws-setup.sh)
 CONFIG_FILE="greengrass-config.json"
-COMPONENT_VERSION="1.0.0"
-S3_BUCKET="edge-snack-dispenser-demo-artifacts"
-COMPONENTS_DIR="components"
 
 # Load configuration
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -106,6 +115,7 @@ EOF
 }
 
 # Create S3 bucket for components
+# Uses the S3_BUCKET from aws-config.sh
 create_s3_bucket() {
     echo -e "${INFO} Creating S3 bucket for components..."
     if ! aws s3 ls "s3://${S3_BUCKET}" 2>&1 > /dev/null; then
@@ -127,11 +137,11 @@ package_component() {
     # Copy source file
     cp src/test/mqtt_test.py "$COMPONENTS_DIR/test/"
     
-    # Create recipe with proper bucket name
-    cat > "$COMPONENTS_DIR/recipes/com.example.mqtt.test.yaml" << EOF
+    # Create recipe with proper bucket name and using the TEST_COMPONENT_NAME
+    cat > "$COMPONENTS_DIR/recipes/${TEST_COMPONENT_NAME}.yaml" << EOF
 ---
 RecipeFormatVersion: 2020-01-25
-ComponentName: com.example.mqtt.test
+ComponentName: ${TEST_COMPONENT_NAME}
 ComponentVersion: ${COMPONENT_VERSION}
 ComponentDescription: "Simple MQTT test component"
 ComponentPublisher: Example
@@ -139,7 +149,7 @@ ComponentConfiguration:
   DefaultConfiguration:
     accessControl:
       aws.greengrass.ipc.mqttproxy:
-        com.example.mqtt.test:mqtt:1:
+        ${TEST_COMPONENT_NAME}:mqtt:1:
           policyDescription: "Allows access to publish to test/messages topic"
           operations:
             - aws.greengrass#PublishToIoTCore
@@ -155,10 +165,6 @@ Manifests:
       - URI: s3://${S3_BUCKET}/test/test.zip
         Unarchive: ZIP
     Lifecycle:
-      # Install:
-      #   RequiresPrivilege: false
-      #    Script: |
-      #    python3 -m pip install --user awsiotsdk
       Run:
         RequiresPrivilege: false
         Script: python3 {artifacts:decompressedPath}/test/mqtt_test.py
@@ -186,9 +192,9 @@ upload_component() {
 create_deployment() {
     echo -e "${INFO} Creating Greengrass deployment..."
     
-    # Create component from recipe
+    # Create component from recipe using the TEST_COMPONENT_NAME
     aws greengrassv2 create-component-version \
-        --inline-recipe fileb://"$COMPONENTS_DIR/recipes/com.example.mqtt.test.yaml" \
+        --inline-recipe fileb://"$COMPONENTS_DIR/recipes/${TEST_COMPONENT_NAME}.yaml" \
         --region "$REGION"
     
     # Create deployment with required nucleus components
@@ -202,7 +208,7 @@ create_deployment() {
             "aws.greengrass.TokenExchangeService": {
                 "componentVersion": "2.0.3"
             },
-            "com.example.mqtt.test": {
+            "'"${TEST_COMPONENT_NAME}"'": {
                 "componentVersion": "1.0.0"
             }
         }' \
@@ -218,7 +224,7 @@ verify_deployment() {
     for i in {1..24}; do
         if aws greengrassv2 list-installed-components \
             --core-device-thing-name "$THING_NAME" \
-            --region "$REGION" | grep -q "com.example.mqtt.test"; then
+            --region "$REGION" | grep -q "${TEST_COMPONENT_NAME}"; then
             echo -e "${INFO} Component successfully deployed!"
             return 0
         fi
@@ -246,7 +252,7 @@ main() {
     echo -e "\n${GREEN}✅ Test component deployment completed!${NC}"
     echo -e "${INFO} Next steps:"
     echo "1. Check Greengrass logs: sudo tail -f /greengrass/v2/logs/greengrass.log"
-    echo "2. Check component logs: sudo tail -f /greengrass/v2/logs/com.example.mqtt.test.log"
+    echo "2. Check component logs: sudo tail -f /greengrass/v2/logs/${TEST_COMPONENT_NAME}.log"
     echo "3. Monitor MQTT messages in AWS IoT Core Test Client (topic: test/messages)"
     echo "4. View component status: sudo /greengrass/v2/bin/greengrass-cli component list"
 }
