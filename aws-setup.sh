@@ -1,7 +1,7 @@
 #!/bin/bash
 # aws-setup.sh
+# Handles AWS credentials, IAM roles, Token Exchange, IoT Thing, Certificates
 # Sets up all required AWS resources for Greengrass deployment
-# Handles: AWS credentials, IAM roles, Token Exchange, IoT Thing, Certificates
 
 set -e
 set -o pipefail
@@ -77,10 +77,6 @@ create_iam_role() {
     fi
 
     # Delete existing policies to ensure clean slate
-    echo -e "${INFO} Cleaning up existing policies..."
-    aws iam delete-role-policy \
-        --role-name "$TOKEN_EXCHANGE_ROLE_NAME" \
-        --policy-name "GreengrassS3ComponentAccess" 2>/dev/null || true
     aws iam delete-role-policy \
         --role-name "$TOKEN_EXCHANGE_ROLE_NAME" \
         --policy-name "GreengrassS3FullAccess" 2>/dev/null || true
