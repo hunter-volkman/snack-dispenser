@@ -1,5 +1,5 @@
 #!/bin/bash
-# greengrass-deploy-test.sh
+# greengrass-deploy-testing.sh
 # Deploys a simple test component that publishes MQTT messages
 
 set -e
