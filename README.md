@@ -86,6 +86,5 @@ python3 scripts/test_system.py
 ## Additional Resources
 
 - Report issues on GitHub
-- AWS Greengrass docs: [Link]
-- Azure IoT Edge docs: [Link]
-- Viam docs: [Link]
+- AWS Greengrass docs: [[Link](https://docs.aws.amazon.com/greengrass/)]
+- Viam docs: [[Link](https://docs.viam.com/)]
