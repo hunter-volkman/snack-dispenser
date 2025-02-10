@@ -86,5 +86,5 @@ python3 scripts/test_system.py
 ## Additional Resources
 
 - Report issues on GitHub
-- AWS Greengrass docs: [[Link](https://docs.aws.amazon.com/greengrass/)]
-- Viam docs: [[Link](https://docs.viam.com/)]
+- AWS Greengrass docs: https://docs.aws.amazon.com/greengrass/
+- Viam docs: https://docs.viam.com/
