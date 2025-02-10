@@ -1,6 +1,8 @@
 # Intelligent Snack Dispenser on AWS Greengrass
 
-An intelligent snack dispenser using computer vision and edge computing. Supports deployment on Greengrass. The demo uses a camera and a pre-trained machine learning model to detect whether a bowl is empty, publishes state updates via MQTT to AWS IoT Core, and actuates a stepper motor to dispense snacks. It also includes utilities for data collection, model training, and hardware testing.
+An intelligent snack dispenser using computer vision and edge computing. Supports deployment on Greengrass. 
+
+The demo uses a camera and a pre-trained machine learning model to detect whether a bowl is empty, publishes state updates via MQTT to AWS IoT Core, and actuates a stepper motor to dispense snacks. It also includes utilities for data collection, model training, and hardware testing.
 
 ## Features
 
@@ -80,6 +82,8 @@ python3 scripts/test_hardware.py
 python3 scripts/test_install.py
 python3 scripts/test_system.py
 ```
+
+## Additional Resources
 
 - Report issues on GitHub
 - AWS Greengrass docs: [Link]
