@@ -488,6 +488,10 @@ Manifests:
       - URI: s3://${S3_BUCKET}/detector/detector.zip
         Unarchive: ZIP
     Lifecycle:
+      Install:
+        Script: |-
+          #!/bin/bash
+          pip3 install --user joblib opencv-python-headless numpy RPi.GPIO pyyaml
       Run:
         RequiresPrivilege: true
         Script: python3 {artifacts:decompressedPath}/detector/bowl_state_detector.py
