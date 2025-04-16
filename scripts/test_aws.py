@@ -30,7 +30,6 @@ def check_credentials():
     required_files = [
         'device.pem.crt',
         'private.pem.key',
-        'public.pem.key',
         'root.ca.pem'
     ]
     
