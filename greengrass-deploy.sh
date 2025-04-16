@@ -521,7 +521,7 @@ create_deployment() {
         --deployment-name "BowlStateDetectorDeployment" \
         --components '{
             "aws.greengrass.Cli": {
-                "componentVersion": "2.13.0"
+            "componentVersion": "2.14.3"
             },
             "aws.greengrass.TokenExchangeService": {
                 "componentVersion": "2.0.3"
